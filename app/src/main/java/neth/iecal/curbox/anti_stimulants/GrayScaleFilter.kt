@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import neth.iecal.curbox.blockers.BaseBlocker
 import neth.iecal.curbox.data.models.GrayscaleGroup
-import neth.iecal.curbox.data.models.TimeInterval
 import neth.iecal.curbox.services.BaseBlockingService
 import neth.iecal.curbox.utils.GrayscaleControl
 import neth.iecal.curbox.utils.getCurrentKeyboardPackageName
@@ -29,6 +28,9 @@ class GrayScaleFilter : BaseBlocker() {
     companion object {
         const val INTENT_ACTION_REFRESH_GRAYSCALE = "neth.iecal.curbox.refresh.grayscale"
         private const val TARGET_EVENTS_MASK = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+
+        private const val STATE_PREFS = "grayscale_filter_state"
+        private const val KEY_ENABLED_BY_CURBOX = "enabled_by_curbox"
     }
 
     private lateinit var service: BaseBlockingService
@@ -40,6 +42,16 @@ class GrayScaleFilter : BaseBlocker() {
 
     @Volatile
     private var grayscaleGroups: List<GrayscaleGroup> = emptyList()
+
+    private var enabledByCurbox = false
+
+    private fun statePrefs() = service.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+
+    private fun rememberEnabledByCurbox(value: Boolean) {
+        if (value == enabledByCurbox) return
+        enabledByCurbox = value
+        statePrefs().edit().putBoolean(KEY_ENABLED_BY_CURBOX, value).apply()
+    }
 
     fun doGrayscaleCheck(event: AccessibilityEvent?) {
         if (event == null || (event.eventType and TARGET_EVENTS_MASK) == 0) return
@@ -60,54 +72,29 @@ class GrayScaleFilter : BaseBlocker() {
         val currentDay = if (calDay == Calendar.SUNDAY) 6 else calDay - 2
         val currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
 
-        var shouldGrayscale = false
+        val shouldGrayscale = GrayscaleDecision.shouldGrayscale(
+            currentPackageName, grayscaleGroups, currentDay, currentMinutes
+        )
+        val systemGrayscaleOn = grayscaleControl.isGrayscaleEnabled(service)
 
-        // Don't grayscale Curbox itself to ensure usability
-            for (group in grayscaleGroups) {
-                if (!group.isActive) continue
-
-                if (group.packages.contains(currentPackageName)) {
-                    val config = group.timeConfig
-                    val intervals = if (config.isEveryday) {
-                        config.everydayIntervals
-                    } else {
-                        config.dailyIntervals[currentDay]
-                    }
-
-                    if (intervals == null || intervals.isEmpty()) {
-                        shouldGrayscale = true
-                        break
-                    } else {
-                        val isInInterval = intervals.any { isWithinInterval(currentMinutes, it) }
-                        if (isInInterval) {
-                            shouldGrayscale = true
-                            break
-                        }
-                    }
-                }
+        when (GrayscaleDecision.nextAction(shouldGrayscale, systemGrayscaleOn, enabledByCurbox)) {
+            GrayscaleDecision.Action.ENABLE -> {
+                Log.d("GrayScaleFilter", "Enabling monochrome for $currentPackageName")
+                grayscaleControl.enableGrayscale(service)
+                rememberEnabledByCurbox(true)
             }
-
-        if (shouldGrayscale) {
-            Log.d("GrayScaleFilter", "Enabling monochrome for $currentPackageName")
-            grayscaleControl.enableGrayscale(service)
-        } else {
-            Log.d("GrayScaleFilter", "Disabling monochrome for $currentPackageName")
-            grayscaleControl.disableGrayscale(service)
-        }
-    }
-
-    private fun isWithinInterval(currentMinutes: Int, interval: TimeInterval): Boolean {
-        val start = interval.startHour * 60 + interval.startMinute
-        val end = interval.endHour * 60 + interval.endMinute
-        return if (start <= end) {
-            currentMinutes in start until end
-        } else {
-            currentMinutes >= start || currentMinutes < end
+            GrayscaleDecision.Action.DISABLE -> {
+                Log.d("GrayScaleFilter", "Disabling monochrome for $currentPackageName")
+                grayscaleControl.disableGrayscale(service)
+                rememberEnabledByCurbox(false)
+            }
+            GrayscaleDecision.Action.NONE -> Unit
         }
     }
 
     fun setup(service: BaseBlockingService) {
         this.service = service
+        enabledByCurbox = statePrefs().getBoolean(KEY_ENABLED_BY_CURBOX, false)
         ignoredGrayScalePackages = listOf(
             getCurrentKeyboardPackageName(service) ?: "com.google.android.inputmethod.latin",
             service.packageName,
