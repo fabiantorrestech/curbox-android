@@ -1,5 +1,6 @@
 package neth.iecal.curbox.utils
 
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
+import kotlinx.coroutines.flow.first
+import neth.iecal.curbox.BuildConfig
 import neth.iecal.curbox.receivers.AdminReceiver
 import neth.iecal.curbox.services.AppBlockerService
 
@@ -127,6 +130,26 @@ object ServiceProtectionManager {
         if (!canSelfHeal()) return
         val admin = ComponentName(context, AdminReceiver::class.java).flattenToString()
         runShell("dpm set-device-owner '$admin'")
+    }
+
+    fun isDeviceOwner(context: Context): Boolean {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        return dpm.isDeviceOwnerApp(context.packageName)
+    }
+
+    /** Returns false when tamper protection still requires the device admin. */
+    @Suppress("DEPRECATION")
+    suspend fun removeDeviceAdmin(context: Context): Boolean {
+        if (!BuildConfig.SUPPORTS_ANTI_UNINSTALL) return false
+        if (DataStoreManager(context).settings.first().antiUninstallConfig2.isEnabled) return false
+
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (dpm.isDeviceOwnerApp(context.packageName)) {
+            dpm.clearDeviceOwnerApp(context.packageName)
+        } else {
+            AntiUninstallManager.removeProtection(context)
+        }
+        return true
     }
 
     private fun runShell(command: String) {

@@ -47,6 +47,7 @@ class SettingsChangeDelayFragment : Fragment() {
     private var isEnabled = false
     private var delayMinutes = 0
     private var requireTamperProtectionOff = false
+    private var liveRequireTamperProtectionOff = false
     private var antiUninstallEnabled = false
     private var pendingChanges: List<PendingSettingsChange> = emptyList()
     private var renderedPendingKey = ""
@@ -125,6 +126,13 @@ class SettingsChangeDelayFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    dataStore.settings.collect { settings ->
+                        liveRequireTamperProtectionOff = settings.settingsChangeDelayConfig2.requireTamperProtectionOff
+                        antiUninstallEnabled = settings.antiUninstallConfig2.isEnabled
+                        tick()
+                    }
+                }
                 dataStore.settingsForEditing.collect { settings ->
                     val config = settings.settingsChangeDelayConfig2
                     isEnabled = config.isEnabled
@@ -200,7 +208,7 @@ class SettingsChangeDelayFragment : Fragment() {
                 SettingsChangeDelayUtils.fieldLabel(requireContext(), change.field)
             countdownViews[change.field] = row.findViewById(R.id.text_pending_countdown)
             row.findViewById<MaterialButton>(R.id.btn_cancel_pending).setOnClickListener {
-                cancelPending(change.field)
+                cancelPending(change)
             }
             containerPending.addView(row)
         }
@@ -210,7 +218,7 @@ class SettingsChangeDelayFragment : Fragment() {
     private fun tick() {
         if (!isAdded) return
         val now = System.currentTimeMillis()
-        val tamperBlocked = requireTamperProtectionOff && antiUninstallEnabled
+        val tamperBlocked = liveRequireTamperProtectionOff && antiUninstallEnabled
         var anyDue = false
         pendingChanges.forEach { change ->
             val remaining = change.appliesAtMs - now
@@ -231,13 +239,20 @@ class SettingsChangeDelayFragment : Fragment() {
         }
     }
 
-    private fun cancelPending(fieldName: String) {
+    private fun cancelPending(change: PendingSettingsChange) {
         viewLifecycleOwner.lifecycleScope.launch {
-            dataStore.cancelPendingSettingsChange(fieldName)
+            dataStore.cancelPendingSettingsChange(change.field, change.appliesAtMs)
             if (isAdded) {
                 Toast.makeText(requireContext(), R.string.change_delay_cancelled_toast, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    override fun onDestroyView() {
+        ticker.removeCallbacks(tickRunnable)
+        renderedPendingKey = ""
+        countdownViews.clear()
+        super.onDestroyView()
     }
 
 }

@@ -1,0 +1,36 @@
+NEW:
+• Backup and restore
+• Use a Pomodoro timer in Focus Mode.
+• Switch between daily and weekly usage from the app usage menu or zooming out.
+• Show the reel counter at checkpoints and choose its colors.
+• Customize mindful message colors and use more variables.
+• Show a random message on the warning screen.
+• Choose to allow Instagram Reels opened from your DM inbox.
+• Add Curbox itself to an app blocking group.
+• Wrong answers in math challenges now add a wait before you can try again.
+• Turn on the flashlight when scanning QR codes.
+• Added German, Turkish, and Vietnamese translations, plus browser support for Helium and CalyxOS Chromium.
+• Make the logged intents viewable.
+
+IMPROVEMENTS:
+• Updated the screen time widget, reel counter settings, and sync account screen.
+• Added the app version to the Info screen.
+• App, reel, and Focus Mode timer notifications no longer replace each other.
+• Improved timer handling when blocker settings change.
+• Grayscale now follows schedule changes each minute and clears when you open Curbox.
+• Improved service cleanup and saved pending website usage when the service stops.
+• Add option to select one perm bg for usage scrn
+
+FIXES:
+• Usage limits now count all recorded usage in the current hour.
+• App usage tracking now ends when you open Curbox and resumes for the current app when tracking is enabled.
+• Fixed settings change delay checks for split and overnight schedules, all day grayscale schedules, allowed reel hours, and unlimited reel usage.
+• Kept pending edits across settings editors and made saves and deletions finish before editors close.
+• Fixed delay checks for temporary group disables and prevented sync from turning off active local tamper protection.
+• Rejected invalid reel cooldown durations.
+• Fixed keyword blocking that could repeatedly close a browser or trigger after you left a blocked page.
+• Fixed freezing when saving large keyword lists.
+• Fixed turning off device owner protection and improved clipboard blocking in warning screen challenges.
+• Fixed Instagram home feed hiding and the warning screen proceed timer restarting when reopening a blocked app.
+• Fixed crashes in settings screens, long crash logs, mindful message group variables, and reel tracking.
+• API commands now report failure when the requested group does not exist.

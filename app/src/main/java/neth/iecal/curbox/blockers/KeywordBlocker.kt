@@ -5,11 +5,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.util.LruCache
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -19,6 +22,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -32,9 +37,11 @@ import neth.iecal.curbox.data.models.AppUsageConfig
 import neth.iecal.curbox.data.models.FocusBlockMode
 import neth.iecal.curbox.data.models.KeywordGroup
 import neth.iecal.curbox.data.models.upgradeLegacyKeywordGroupConfigs
+import neth.iecal.curbox.hardcoded.URL_BAR_ID_LIST
 import neth.iecal.curbox.services.BaseBlockingService
 import neth.iecal.curbox.trackers.WebsiteObservation
 import neth.iecal.curbox.ui.activity.WarningActivity
+import neth.iecal.curbox.utils.AccessibilityHelper
 import neth.iecal.curbox.utils.ActiveTimeGroupWindow
 import neth.iecal.curbox.utils.KeywordMatcher
 import neth.iecal.curbox.utils.TimerNotification
@@ -49,12 +56,16 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 class KeywordBlocker : BaseBlocker() {
+
+    private val blockerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var destroyed = false
     companion object {
         const val INTENT_ACTION_REFRESH_CONFIG = "neth.iecal.curbox.refresh.keywordblocker.config"
         const val INTENT_ACTION_REFRESH_KEYWORD_BLOCKER_COOLDOWN = "neth.iecal.curbox.refresh.keywordblocker.cooldown"
         private const val TARGET_EVENTS_MASK =
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         private const val BLOCK_SUPPRESSION_MS = 5_000L
+        private const val REPLACEMENT_PAGE = "about:blank"
         private const val COOLDOWN_NOTIFICATION_ID = 1004
     }
 
@@ -148,9 +159,10 @@ class KeywordBlocker : BaseBlocker() {
     }
 
     private fun startObservingDatabase() {
+        if (destroyed) return
         if (observationJob?.isActive == true) return
 
-        observationJob = CoroutineScope(Dispatchers.IO).launch {
+        observationJob = blockerScope.launch {
             val db = AppDatabase.getInstance(service)
             val dao = db.websiteStatsDao()
             callbackFlow {
@@ -164,6 +176,7 @@ class KeywordBlocker : BaseBlocker() {
                 val latest = dao.getStatsForDate(date).maxByOrNull { it.lastVisited }
                 if (latest != null &&
                     latest.lastVisited > (System.currentTimeMillis() - 2500) &&
+                    isShowingNow(latest) &&
                     markSnapshotAsObserved(latest)
                 ) {
                     evaluateAndBlock(latest.packageName, latest.urlIdentifier)
@@ -171,6 +184,18 @@ class KeywordBlocker : BaseBlocker() {
                 }
             }
         }
+    }
+
+    // Saved rows can outlive their page, so only act on one while it is on screen.
+    private fun isShowingNow(snapshot: WebsiteStatsEntity): Boolean {
+        val observation = lastWebsiteObservation ?: return false
+        if (observation.packageName != snapshot.packageName ||
+            observation.urlIdentifier != snapshot.urlIdentifier
+        ) return false
+        val foreground = runCatching {
+            service.rootInActiveWindow?.packageName?.toString()
+        }.getOrNull()
+        return foreground == snapshot.packageName
     }
 
     private fun markSnapshotAsObserved(snapshot: WebsiteStatsEntity): Boolean =
@@ -193,12 +218,14 @@ class KeywordBlocker : BaseBlocker() {
         }
 
     fun onWebsiteObserved(observation: WebsiteObservation?) {
+        if (destroyed) return
         lastWebsiteObservation = observation
         if (observation == null || !isTurnedOn) return
         evaluateAndBlock(observation.packageName, observation.urlIdentifier)
     }
 
     private fun evaluateAndBlock(packageName: String, urlIdentifier: String) {
+        if (destroyed) return
         val matched = findMatchingGroups(urlIdentifier)
         if (matched.isEmpty()) return
         val now = System.currentTimeMillis()
@@ -216,7 +243,7 @@ class KeywordBlocker : BaseBlocker() {
             val window = group.config?.schedule?.activeWindow(now) ?: continue
             if (isUsageLimitExceeded(group, window)) {
                 if (!claimBlock(packageName, urlIdentifier, group.id)) return
-                handleBlocking(group)
+                handleBlocking(group, packageName)
                 return
             }
         }
@@ -228,7 +255,7 @@ class KeywordBlocker : BaseBlocker() {
             if (recheck > now && (soonest == 0L || recheck < soonest)) soonest = recheck
         }
         if (soonest > now) {
-            CoroutineScope(Dispatchers.IO).launch {
+            blockerScope.launch {
                 service.dataStoreManager.updateNextWebsiteRecheckTime(soonest)
             }
         }
@@ -253,15 +280,20 @@ class KeywordBlocker : BaseBlocker() {
     private fun blockTarget(packageName: String, urlIdentifier: String, groupId: String): String =
         "$groupId\u0000$packageName\u0000$urlIdentifier"
 
-    private fun handleBlocking(group: KeywordGroup) {
+    private fun handleBlocking(group: KeywordGroup, packageName: String) {
         Thread.sleep(250)
-        service.pressBack()
-        service.pressHome()
+        if (destroyed) return
+        // Back + Home can leave the tab on the blocked page, so leave it from the URL bar.
+        if (!replaceBlockedPage(packageName)) {
+            service.pressBack()
+            service.pressHome()
+        }
         Thread.sleep(1000)
 
         if (group.warningScreenConfig.isWarningDialogHidden) return
 
         Handler(Looper.getMainLooper()).postDelayed({
+            if (destroyed) return@postDelayed
             val intent = Intent(service, WarningActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 putExtra("mode", Constants.WARNING_SCREEN_MODE_KEYWORD_BLOCKER)
@@ -270,6 +302,28 @@ class KeywordBlocker : BaseBlocker() {
             }
             service.startActivity(intent)
         }, 300)
+    }
+
+    private fun replaceBlockedPage(packageName: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        if (findMatchingGroups(REPLACEMENT_PAGE).isNotEmpty()) return false
+        val urlBarId = URL_BAR_ID_LIST[packageName]?.displayUrlBarId ?: return false
+        return runCatching {
+            val root = service.rootInActiveWindow ?: return false
+            if (root.packageName?.toString() != packageName) return false
+            val urlBar = AccessibilityHelper.findElementById(root, urlBarId) ?: return false
+            if (!urlBar.isEditable) return false
+            urlBar.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            urlBar.refresh()
+            val text = Bundle().apply {
+                putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    REPLACEMENT_PAGE
+                )
+            }
+            urlBar.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text) &&
+                urlBar.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        }.getOrDefault(false)
     }
 
     private fun isUsageLimitExceeded(
@@ -346,6 +400,7 @@ class KeywordBlocker : BaseBlocker() {
     private var configJob: Job? = null
 
     fun setupBlocker(service: BaseBlockingService, watchSettings: Boolean = true) {
+        if (destroyed) return
         this.service = service
         this.browserBlocker = BrowserBlocker(service)
         this.prefs = service.getSharedPreferences("keyword_blocker_prefs", Context.MODE_PRIVATE)
@@ -357,7 +412,7 @@ class KeywordBlocker : BaseBlocker() {
         if (!watchSettings) return
 
         configJob?.cancel()
-        configJob = CoroutineScope(Dispatchers.IO).launch {
+        configJob = blockerScope.launch {
             service.dataStoreManager.settings.collectLatest { settings ->
                 val keywordConfig =
                     settings.keywordBlockerConfig.upgradeLegacyKeywordGroupConfigs()
@@ -382,6 +437,7 @@ class KeywordBlocker : BaseBlocker() {
                     showNextCooldownNotification()
                     reevaluateCurrentWebsite()
                     Handler(Looper.getMainLooper()).post {
+                        if (destroyed) return@post
                         val currentPackage =
                             service.rootInActiveWindow?.packageName?.toString() ?: return@post
                         val event = AccessibilityEvent.obtain(
@@ -402,6 +458,7 @@ class KeywordBlocker : BaseBlocker() {
     }
 
     private fun reevaluateCurrentWebsite() {
+        if (destroyed) return
         val observation = lastWebsiteObservation ?: return
         val currentPackage = runCatching {
             service.rootInActiveWindow?.packageName?.toString()
@@ -458,7 +515,7 @@ class KeywordBlocker : BaseBlocker() {
         showCooldownNotification(groupId, cooldownEnd)
 
         val date = TimeTools.getCurrentDate()
-        CoroutineScope(Dispatchers.IO).launch {
+        blockerScope.launch {
             val latest = AppDatabase.getInstance(service).websiteStatsDao()
                 .getStatsForDate(date).maxByOrNull { it.lastVisited }
             if (latest != null && latest.lastVisited > (System.currentTimeMillis() - 5000)) {
@@ -468,7 +525,7 @@ class KeywordBlocker : BaseBlocker() {
     }
 
     private fun showNextCooldownNotification() {
-        if (!isTurnedOn || !::notificationManager.isInitialized) return
+        if (destroyed || !isTurnedOn || !::notificationManager.isInitialized) return
 
         val now = System.currentTimeMillis()
         val nextCooldown = cooldownGroupsList
@@ -485,6 +542,7 @@ class KeywordBlocker : BaseBlocker() {
     }
 
     private fun showCooldownNotification(groupId: String, cooldownEnd: Long) {
+        if (destroyed) return
         if (!::notificationManager.isInitialized) return
 
         val remaining = cooldownEnd - System.currentTimeMillis()
@@ -533,7 +591,9 @@ class KeywordBlocker : BaseBlocker() {
     }
 
     fun removeReceivers() {
-        service.unregisterReceiver(refreshReceiver)
+        destroyed = true
+        blockerScope.cancel()
+        configJob?.cancel()
         observationJob?.cancel()
         observationJob = null
         lastWebsiteObservation = null
@@ -541,6 +601,7 @@ class KeywordBlocker : BaseBlocker() {
             notificationManager.release()
         }
         notifiedCooldownGroupId = null
+        service.unregisterReceiver(refreshReceiver)
     }
 
     private val refreshReceiver = object : BroadcastReceiver() {

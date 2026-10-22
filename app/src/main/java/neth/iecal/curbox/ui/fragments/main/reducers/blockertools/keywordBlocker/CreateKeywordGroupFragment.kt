@@ -17,6 +17,8 @@ import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import neth.iecal.curbox.CrashLogger
 import kotlinx.coroutines.withContext
 import neth.iecal.curbox.R
 import neth.iecal.curbox.data.models.AppBlockerWarningScreenConfig
@@ -79,11 +81,15 @@ class CreateKeywordGroupFragment : Fragment() {
             viewModel.keywordBlockerConfig.collectLatest { config ->
                 val group = config.keywordGroups.find { it.id == groupId }
                 if (group != null && !isEditing) {
+                    val (keywords, keywordItems) = withContext(Dispatchers.Default) {
+                        val uniqueKeywords = group.selectedKeywords.toCollection(LinkedHashSet())
+                        uniqueKeywords to uniqueKeywords.toList()
+                    }
                     isEditing = true
                     binding.tvTitle.text = getString(R.string.keyword_group_edit_title)
                     binding.etGroupName.setText(group.name)
-                    selectedKeywords = group.selectedKeywords.toCollection(LinkedHashSet())
-                    updateKeywordsList()
+                    selectedKeywords = keywords
+                    keywordAdapter.submitList(keywordItems)
 
                     group.config?.let { scheduledConfig ->
                         viewModel.currentTimeConfig = scheduledConfig.schedule
@@ -168,8 +174,10 @@ class CreateKeywordGroupFragment : Fragment() {
                     true
                 }
                 R.id.action_delete -> {
-                    existingGroupId?.let { viewModel.deleteGroup(it) }
-                    requireActivity().finish()
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        existingGroupId?.let { viewModel.deleteGroupAndWait(it) }
+                        requireActivity().finish()
+                    }
                     true
                 }
                 else -> false
@@ -290,8 +298,25 @@ class CreateKeywordGroupFragment : Fragment() {
             warningScreenConfig = viewModel.warningScrnConfig.copy(isOnOpenConfig = false)
         )
 
-        if (existingGroupId != null) viewModel.updateGroupById(group) else viewModel.addGroup(group)
-        requireActivity().finish()
+        binding.fabSaveGroup.isEnabled = false
+        binding.fabSaveGroup.setText(R.string.settings_saving)
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (existingGroupId != null) viewModel.updateGroupByIdAndWait(group)
+                else viewModel.addGroupAndWait(group)
+                requireActivity().finish()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashLogger(requireContext().applicationContext).logNonFatalError(e)
+                Toast.makeText(requireContext(), R.string.settings_save_failed, Toast.LENGTH_SHORT).show()
+            } finally {
+                _binding?.fabSaveGroup?.apply {
+                    isEnabled = true
+                    setText(R.string.done)
+                }
+            }
+        }
     }
 
     override fun onDestroyView() {

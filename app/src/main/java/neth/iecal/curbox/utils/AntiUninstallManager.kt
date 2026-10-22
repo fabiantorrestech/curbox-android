@@ -27,10 +27,12 @@ object AntiUninstallManager {
     fun isAdminActive(context: Context): Boolean =
         dpm(context).isAdminActive(adminComponent(context))
 
-    /** Removes the device admin so the app can be uninstalled again. Safe to call when inactive. */
+    /** Removes a regular device admin. Device ownership must be cleared separately. */
     fun removeProtection(context: Context) {
         val dpm = dpm(context)
         val component = adminComponent(context)
+        // Device ownership is removed separately from the service protection screen.
+        if (dpm.isDeviceOwnerApp(context.packageName)) return
         if (dpm.isAdminActive(component)) {
             dpm.removeActiveAdmin(component)
         }

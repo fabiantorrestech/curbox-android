@@ -71,7 +71,8 @@ class AppBlockerSettingViewModel(application: Application) : AndroidViewModel(ap
             // This escape hatch must not become usable while enabling it is still pending.
             dataStoreManager.settings.collectLatest { settings ->
                 _temporaryDisableAvailable.value =
-                    !settings.settingsChangeDelayConfig2.isEnabled
+                    !settings.settingsChangeDelayConfig2.isEnabled &&
+                    !settings.settingsChangeDelayConfig2.requireTamperProtectionOff
             }
         }
     }
@@ -81,40 +82,39 @@ class AppBlockerSettingViewModel(application: Application) : AndroidViewModel(ap
         application.sendBroadcast(intent)
     }
 
-    fun updateGroups(newGroups: List<AppGroup>) {
-        viewModelScope.launch {
-            dataStoreManager.updateAppGroups(newGroups)
-            requestAppBlockerRefresh()
-        }
+    private suspend fun persistGroups(newGroups: List<AppGroup>) {
+        dataStoreManager.updateAppGroups(newGroups)
+        requestAppBlockerRefresh()
+    }
+
+    fun updateGroups(newGroups: List<AppGroup>) = viewModelScope.launch {
+        persistGroups(newGroups)
     }
     
-    fun addGroup(group: AppGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settingsForEditing.first()
-            val updatedGroups = currentSettings.blockedAppGroups.toMutableList().apply { add(group) }
-            updateGroups(updatedGroups)
+    fun addGroup(group: AppGroup) = viewModelScope.launch {
+        addGroupAndWait(group)
+    }
+
+    suspend fun addGroupAndWait(group: AppGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val updatedGroups = currentSettings.blockedAppGroups.toMutableList().apply { add(group) }
+        persistGroups(updatedGroups)
+    }
+
+    suspend fun updateGroupById(updatedGroup: AppGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val updatedGroups = currentSettings.blockedAppGroups.toMutableList()
+        val index = updatedGroups.indexOfFirst { it.id == updatedGroup.id }
+        if (index != -1) {
+            updatedGroups[index] = updatedGroup
+            persistGroups(updatedGroups)
         }
     }
 
-    fun updateGroupById(updatedGroup: AppGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settingsForEditing.first()
-            val updatedGroups = currentSettings.blockedAppGroups.toMutableList()
-            val index = updatedGroups.indexOfFirst { it.id == updatedGroup.id }
-            if (index != -1) {
-                updatedGroups[index] = updatedGroup
-                updateGroups(updatedGroups)
-            }
-        }
-    }
-
-    fun deleteGroup(groupId: String) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settingsForEditing.first()
-            val updatedGroups = currentSettings.blockedAppGroups.toMutableList()
-            updatedGroups.removeAll { it.id == groupId }
-            updateGroups(updatedGroups)
-        }
+    suspend fun deleteGroup(groupId: String) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val updatedGroups = currentSettings.blockedAppGroups.filterNot { it.id == groupId }
+        persistGroups(updatedGroups)
     }
 
     fun updateGroupActiveState(index: Int, isActive: Boolean) {

@@ -75,47 +75,52 @@ object RestrictionComparator {
     }
 
     fun appGroups(old: List<AppGroup>, new: List<AppGroup>): Boolean {
-        return old.filter { it.isActive }.all { o ->
+        return old.filter { it.isActive || it.temporarilyDisabledUntilMs > 0L }.all { o ->
             val n = new.find { it.id == o.id } ?: return@all false
             appGroup(o, n)
         }
     }
 
     private fun appGroup(o: AppGroup, n: AppGroup): Boolean {
-        if (!n.isActive) return false
+        if (!temporaryDisableSameOrShorter(o.isActive, o.temporarilyDisabledUntilMs,
+                n.isActive, n.temporarilyDisabledUntilMs)) return false
         if (!n.selectedPackages.containsAll(o.selectedPackages)) return false
         if (!warningConfig(o.warningScreenConfig, n.warningScreenConfig)) return false
         val oldConfig = o.config ?: return false
         val newConfig = n.config ?: return false
         return appTimeCoverageSameOrWider(oldConfig.schedule, newConfig.schedule) &&
-            usageLimitSameOrLower(oldConfig.usage, newConfig.usage)
+            usageLimitSameOrLower(oldConfig.usage, newConfig.usage) &&
+            usageWindowsSameOrWider(oldConfig.schedule, newConfig.schedule, newConfig.usage)
     }
 
     fun keywordBlocker(old: KeywordBlocker, new: KeywordBlocker): Boolean {
         if (!old.isActive) return true
         if (!new.isActive) return false
         if (old.blockAllExceptSupported && !new.blockAllExceptSupported) return false
-        return old.keywordGroups.filter { it.isActive }.all { o ->
+        return old.keywordGroups.filter { it.isActive || it.temporarilyDisabledUntilMs > 0L }.all { o ->
             val n = new.keywordGroups.find { it.id == o.id } ?: return@all false
             keywordGroup(o, n)
         }
     }
 
     private fun keywordGroup(o: KeywordGroup, n: KeywordGroup): Boolean {
-        if (!n.isActive) return false
-        if (!n.selectedKeywords.containsAll(o.selectedKeywords)) return false
+        if (!temporaryDisableSameOrShorter(o.isActive, o.temporarilyDisabledUntilMs,
+                n.isActive, n.temporarilyDisabledUntilMs)) return false
+        if (!n.selectedKeywords.toHashSet().containsAll(o.selectedKeywords)) return false
         if (!warningConfig(o.warningScreenConfig, n.warningScreenConfig)) return false
         val oldConfig = o.config ?: return false
         val newConfig = n.config ?: return false
         return appTimeCoverageSameOrWider(oldConfig.schedule, newConfig.schedule) &&
-            usageLimitSameOrLower(oldConfig.usage, newConfig.usage)
+            usageLimitSameOrLower(oldConfig.usage, newConfig.usage) &&
+            usageWindowsSameOrWider(oldConfig.schedule, newConfig.schedule, newConfig.usage)
     }
 
     fun reelBlocker(old: ReelBlocker, new: ReelBlocker): Boolean {
         val o = old.upgradeLegacyConfig(gson)
         val n = new.upgradeLegacyConfig(gson)
-        if (!o.isActive) return true
-        if (!n.isActive) return false
+        if (!o.isActive && o.temporarilyDisabledUntilMs == 0L) return true
+        if (!temporaryDisableSameOrShorter(o.isActive, o.temporarilyDisabledUntilMs,
+                n.isActive, n.temporarilyDisabledUntilMs)) return false
         if (!o.excludedPackages.containsAll(n.excludedPackages)) return false
         if (!o.allowInstagramReelsFromDmInbox && n.allowInstagramReelsFromDmInbox) return false
         if (!warningConfig(o.warningScreenConfig, n.warningScreenConfig)) return false
@@ -125,24 +130,50 @@ object RestrictionComparator {
         val newUsage = if (newConfig.usage.isDailyUniform) List(7) { newConfig.usage.uniformLimit } else newConfig.usage.dailyLimits.toList()
         val oldCount = if (oldConfig.reelCount.isDailyUniform) List(7) { oldConfig.reelCount.uniformLimit } else oldConfig.reelCount.dailyLimits.toList()
         val newCount = if (newConfig.reelCount.isDailyUniform) List(7) { newConfig.reelCount.uniformLimit } else newConfig.reelCount.dailyLimits.toList()
+        // Reel intervals are allowed hours, so a stricter schedule must be a subset.
         return timeCoverageSameOrWider(
-            oldFor = { day -> if (oldConfig.schedule.isEveryday) oldConfig.schedule.everydayIntervals else oldConfig.schedule.dailyIntervals[day] ?: mutableListOf() },
-            newFor = { day -> if (newConfig.schedule.isEveryday) newConfig.schedule.everydayIntervals else newConfig.schedule.dailyIntervals[day] ?: mutableListOf() }
-        ) && newUsage.indices.all { newUsage[it] <= oldUsage[it] } &&
-            newCount.indices.all { newCount[it] <= oldCount[it] }
+            oldFor = { day -> if (newConfig.schedule.isEveryday) newConfig.schedule.everydayIntervals else newConfig.schedule.dailyIntervals[day] ?: mutableListOf() },
+            newFor = { day -> if (oldConfig.schedule.isEveryday) oldConfig.schedule.everydayIntervals else oldConfig.schedule.dailyIntervals[day] ?: mutableListOf() }
+        ) && oldUsage.size == 7 && newUsage.size == 7 && oldCount.size == 7 && newCount.size == 7 &&
+            newUsage.indices.all { optionalLimitSameOrLower(oldUsage[it], newUsage[it]) } &&
+            newCount.indices.all { optionalLimitSameOrLower(oldCount[it].toLong(), newCount[it].toLong()) }
     }
+
+    // Zero disables reel limits rather than blocking every reel.
+    private fun optionalLimitSameOrLower(old: Long, new: Long): Boolean =
+        old >= 0L && new >= 0L && (old == 0L || new in 1..old)
 
     fun grayscaleGroups(old: List<GrayscaleGroup>, new: List<GrayscaleGroup>): Boolean {
         return old.filter { it.isActive }.all { o ->
             val n = new.find { it.groupId == o.groupId } ?: return@all false
             n.isActive &&
                 n.packages.containsAll(o.packages) &&
-                appTimeCoverageSameOrWider(o.timeConfig, n.timeConfig)
+                grayscaleTimeCoverageSameOrWider(o.timeConfig, n.timeConfig)
         }
     }
 
+    private fun grayscaleTimeCoverageSameOrWider(old: AppTimeConfig, new: AppTimeConfig): Boolean {
+        fun intervalsFor(config: AppTimeConfig, day: Int): List<TimeInterval> {
+            val intervals = if (config.isEveryday) config.everydayIntervals
+                else config.dailyIntervals[day].orEmpty()
+            if (intervals.isEmpty()) return listOf(TimeInterval(0, 0, 24, 0))
+            // Grayscale evaluates both halves of overnight intervals on the selected day.
+            return intervals.flatMap { interval ->
+                val (start, end) = interval.toMinuteRange()
+                if (start > end) listOf(
+                    interval.copy(endHour = 24, endMinute = 0),
+                    interval.copy(startHour = 0, startMinute = 0)
+                ) else listOf(interval)
+            }
+        }
+        return timeCoverageSameOrWider(
+            oldFor = { intervalsFor(old, it) },
+            newFor = { intervalsFor(new, it) }
+        )
+    }
+
     fun autoDndGroups(old: List<AutoDndGroup>, new: List<AutoDndGroup>): Boolean {
-        return old.all { o ->
+        return old.filter { it.autoTurnOnDnd }.all { o ->
             val n = new.find { it.groupId == o.groupId } ?: return@all false
             (!o.autoTurnOnDnd || n.autoTurnOnDnd) &&
                 appTimeCoverageSameOrWider(o.timeConfig, n.timeConfig)
@@ -197,15 +228,58 @@ object RestrictionComparator {
             if (old.isDailyUniform) List(7) { old.uniformLimit } else old.dailyLimits.toList()
         val newLimits =
             if (new.isDailyUniform) List(7) { new.uniformLimit } else new.dailyLimits.toList()
-        return newLimits.indices.all { newLimits[it] <= oldLimits[it] }
+        return oldLimits.size == 7 && newLimits.size == 7 &&
+            newLimits.indices.all { newLimits[it] >= 0 && newLimits[it] <= oldLimits[it] }
+    }
+
+    private fun temporaryDisableSameOrShorter(
+        oldActive: Boolean, oldUntil: Long, newActive: Boolean, newUntil: Long
+    ): Boolean = if (newActive) newUntil == 0L
+        else !oldActive && oldUntil > 0L && newUntil in 1..oldUntil
+
+    private fun usageWindowsSameOrWider(old: AppTimeConfig, new: AppTimeConfig, usage: AppUsageConfig): Boolean {
+        if (old == new) return true
+        fun windowsFor(config: AppTimeConfig, day: Int): List<Pair<Int, Int>> {
+            fun intervalsFor(index: Int) = if (config.isEveryday) config.everydayIntervals
+                else config.dailyIntervals[index].orEmpty()
+            return intervalsFor(day).map { it.toWindowRange() } +
+                intervalsFor((day + 6) % 7)
+                    .filter { it.toMinuteRange().first > it.toMinuteRange().second }
+                    .map { it.toWindowRange().let { range -> range.first - 1440 to range.second - 1440 } }
+        }
+        // Usage resets at each interval start. Adjacent intervals cannot replace one window.
+        return (0..6).all { day ->
+            val limit = if (usage.isDailyUniform) usage.uniformLimit else usage.dailyLimits[day]
+            if (limit <= 0L) return@all true
+            val ranges = windowsFor(new, day).sortedBy { it.first }
+            if (ranges.zipWithNext().any { (a, b) -> a.second > b.first }) return@all false
+            windowsFor(old, day).all { range ->
+                ranges.any { it.first <= range.first && it.second >= range.second }
+            }
+        }
+    }
+
+    private fun TimeInterval.toWindowRange(): Pair<Int, Int> {
+        val range = toMinuteRange()
+        return if (range.second < range.first) range.first to range.second + 1440 else range
     }
 
     private fun timeCoverageSameOrWider(
         oldFor: (Int) -> List<TimeInterval>,
         newFor: (Int) -> List<TimeInterval>
     ): Boolean {
-        // Day keys are checked over 0..7 so both 0 based and Calendar style maps are covered
-        return (0..7).all { day -> covers(newFor(day), oldFor(day)) }
+        fun rangesFor(day: Int, intervalsFor: (Int) -> List<TimeInterval>): List<TimeInterval> {
+            val today = intervalsFor(day)
+            val previous = intervalsFor((day + 6) % 7)
+            return today.flatMap { interval ->
+                val range = interval.toMinuteRange()
+                require(range.first in 0..1439 && range.second in 0..1440)
+                if (range.first > range.second) listOf(interval.copy(endHour = 24, endMinute = 0))
+                else listOf(interval)
+            } + previous.filter { it.toMinuteRange().first > it.toMinuteRange().second }
+                .map { it.copy(startHour = 0, startMinute = 0) }
+        }
+        return (0..6).all { day -> covers(rangesFor(day, newFor), rangesFor(day, oldFor)) }
     }
 
     /** True when the union of [covering] contains every minute of every interval in [covered]. */

@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.blockers.BaseBlocker
 import neth.iecal.curbox.data.models.GrayscaleGroup
 import neth.iecal.curbox.services.BaseBlockingService
@@ -39,6 +40,14 @@ class GrayScaleFilter : BaseBlocker() {
     private var lastPackageName: String? = null
     private var settingsJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
+    @Volatile private var destroyed = false
+    private val scheduleChecker = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            recheckCurrentPackage()
+            handler.postDelayed(this, 60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }
 
     @Volatile
     private var grayscaleGroups: List<GrayscaleGroup> = emptyList()
@@ -57,24 +66,23 @@ class GrayScaleFilter : BaseBlocker() {
         if (event == null || (event.eventType and TARGET_EVENTS_MASK) == 0) return
 
         val currentPackageName = event.packageName?.toString() ?: return
+        applyForPackage(currentPackageName)
+    }
+
+    private fun applyForPackage(currentPackageName: String, force: Boolean = false) {
+        if (destroyed) return
         
         // Skip check if it's the same package or system UI or keyboard
         // We don't skip Curbox here because we want to disable grayscale when user is in the app
-        if (currentPackageName == lastPackageName || 
+        if ((!force && currentPackageName == lastPackageName) ||
             currentPackageName == "com.android.systemui" ||
             ignoredGrayScalePackages.contains(currentPackageName)) return
 
         lastPackageName = currentPackageName
 
-        val now = Calendar.getInstance()
-        val calDay = now.get(Calendar.DAY_OF_WEEK)
-        // Monday=0, ..., Sunday=6 mapping (matches GrayscaleTimeSettingsFragment)
-        val currentDay = if (calDay == Calendar.SUNDAY) 6 else calDay - 2
-        val currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-
-        val shouldGrayscale = GrayscaleDecision.shouldGrayscale(
-            currentPackageName, grayscaleGroups, currentDay, currentMinutes
-        )
+        // Curbox itself never wants grayscale, but only clear a filter Curbox switched on
+        val shouldGrayscale = currentPackageName != service.packageName &&
+            wantsGrayscaleNow(currentPackageName)
         val systemGrayscaleOn = grayscaleControl.isGrayscaleEnabled(service)
 
         when (GrayscaleDecision.nextAction(shouldGrayscale, systemGrayscaleOn, enabledByCurbox)) {
@@ -92,12 +100,24 @@ class GrayScaleFilter : BaseBlocker() {
         }
     }
 
+    private fun wantsGrayscaleNow(packageName: String): Boolean {
+        val now = Calendar.getInstance()
+        val calDay = now.get(Calendar.DAY_OF_WEEK)
+        // Monday=0, ..., Sunday=6 mapping (matches GrayscaleTimeSettingsFragment)
+        val currentDay = if (calDay == Calendar.SUNDAY) 6 else calDay - 2
+        val currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+
+        return GrayscaleDecision.shouldGrayscale(packageName, grayscaleGroups, currentDay, currentMinutes)
+    }
+
     fun setup(service: BaseBlockingService) {
         this.service = service
         enabledByCurbox = statePrefs().getBoolean(KEY_ENABLED_BY_CURBOX, false)
+        destroyed = false
+        handler.removeCallbacks(scheduleChecker)
+        handler.postDelayed(scheduleChecker, 60_000L - System.currentTimeMillis() % 60_000L)
         ignoredGrayScalePackages = listOf(
             getCurrentKeyboardPackageName(service) ?: "com.google.android.inputmethod.latin",
-            service.packageName,
             "com.google.android.apps.wellbeing"
         )
         
@@ -107,22 +127,19 @@ class GrayScaleFilter : BaseBlocker() {
                 grayscaleGroups = settings.grayscaleGroups
                 Log.d("GrayScaleFilter", "Grayscale Groups loaded: $grayscaleGroups")
                 
-                // Force a check for the current package to apply changes immediately
-                handler.post {
-                    try {
-                        val currentPackage = service.rootInActiveWindow?.packageName?.toString()
-                        if (currentPackage != null) {
-                            lastPackageName = null // Reset to force re-check
-                            val dummyEvent = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
-                            dummyEvent.packageName = currentPackage
-                            doGrayscaleCheck(dummyEvent)
-                            dummyEvent.recycle()
-                        }
-                    } catch (e: Exception) {
-                        Log.e("GrayScaleFilter", "Error in forced re-check", e)
-                    }
-                }
+                handler.post { recheckCurrentPackage() }
             }
+        }
+    }
+
+    private fun recheckCurrentPackage() {
+        if (destroyed) return
+        try {
+            val currentPackage = service.rootInActiveWindow?.packageName?.toString() ?: return
+            applyForPackage(currentPackage, force = true)
+        } catch (error: Exception) {
+            Log.e("GrayScaleFilter", "Error rechecking current package", error)
+            CrashLogger(service).logNonFatalError(error)
         }
     }
 
@@ -139,6 +156,7 @@ class GrayScaleFilter : BaseBlocker() {
     }
 
     fun unregisterReceivers() {
+        destroyed = true
         try {
             service.unregisterReceiver(refreshReceiver)
         } catch (e: Exception) {

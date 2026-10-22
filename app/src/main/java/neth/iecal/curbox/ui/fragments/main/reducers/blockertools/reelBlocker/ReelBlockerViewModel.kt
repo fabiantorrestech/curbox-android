@@ -27,9 +27,14 @@ class ReelBlockerViewModel(application: Application) : AndroidViewModel(applicat
 
     init {
         viewModelScope.launch {
+            dataStoreManager.settings.collectLatest { settings ->
+                _temporaryDisableAvailable.value = !settings.settingsChangeDelayConfig2.isEnabled &&
+                    !settings.settingsChangeDelayConfig2.requireTamperProtectionOff
+            }
+        }
+        viewModelScope.launch {
             dataStoreManager.settingsForEditing.collectLatest { settings ->
                 _reelBlockerConfig.value = settings.reelBlockerConfig.upgradeLegacyConfig()
-                _temporaryDisableAvailable.value = !settings.settingsChangeDelayConfig2.isEnabled
             }
         }
     }

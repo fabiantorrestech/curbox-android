@@ -46,6 +46,7 @@ class FocusModeBlocker : BaseBlocker() {
     )
 
     companion object {
+        private const val TIMER_NOTIFICATION_ID = 1002
         const val INTENT_ACTION_REFRESH_FOCUS_MODE = "neth.iecal.curbox.refresh.focus_mode"
         const val INTENT_ACTION_UNSUSPEND_ALL = "neth.iecal.curbox.unsuspend_all_apps"
     }
@@ -292,7 +293,7 @@ class FocusModeBlocker : BaseBlocker() {
         crashLogger = CrashLogger(service)
         keywordBlocker.setupBlocker(service, watchSettings = false)
         if (!this::notificationManager.isInitialized) {
-            notificationManager = TimerNotification(service)
+            notificationManager = TimerNotification(service, TIMER_NOTIFICATION_ID)
         }
         if (!this::soundPlayer.isInitialized) {
             soundPlayer = FocusModeSoundPlayer(service)

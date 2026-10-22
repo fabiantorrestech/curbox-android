@@ -70,7 +70,9 @@ object CurboxApiCommands {
 
     private suspend fun startFocus(context: Context, dataStore: DataStoreManager, groupId: String, minutes: Int) {
         val settings = dataStore.settings.first()
-        val group = settings.manualFocusGroups.firstOrNull { it.groupId == groupId } ?: return
+        val group = requireNotNull(settings.manualFocusGroups.firstOrNull { it.groupId == groupId }) {
+            "Unknown focus group: $groupId"
+        }
         val durationMs = minutes.coerceAtLeast(1) * 60_000L
         val now = System.currentTimeMillis()
         val endTimeInMillis = now + durationMs
@@ -106,7 +108,9 @@ object CurboxApiCommands {
 
     private suspend fun setAppBlockerGroup(context: Context, dataStore: DataStoreManager, groupId: String, enable: Boolean) {
         val settings = dataStore.settings.first()
-        if (settings.blockedAppGroups.none { it.id == groupId }) return
+        require(settings.blockedAppGroups.any { it.id == groupId }) {
+            "Unknown app blocker group: $groupId"
+        }
         val updated = settings.blockedAppGroups.map {
             if (it.id == groupId) it.copy(isActive = enable) else it
         }
@@ -121,7 +125,9 @@ object CurboxApiCommands {
 
     private suspend fun setKeywordGroup(context: Context, dataStore: DataStoreManager, groupId: String, enable: Boolean) {
         val settings = dataStore.settings.first()
-        if (settings.keywordBlockerConfig.keywordGroups.none { it.id == groupId }) return
+        require(settings.keywordBlockerConfig.keywordGroups.any { it.id == groupId }) {
+            "Unknown keyword group: $groupId"
+        }
         dataStore.updateKeywordBlockerConfig { config ->
             config.copy(keywordGroups = config.keywordGroups.map {
                 if (it.id == groupId) it.copy(isActive = enable) else it
@@ -143,7 +149,9 @@ object CurboxApiCommands {
 
     private suspend fun setGrayscaleGroup(context: Context, dataStore: DataStoreManager, groupId: String, enable: Boolean) {
         val settings = dataStore.settings.first()
-        if (settings.grayscaleGroups.none { it.groupId == groupId }) return
+        require(settings.grayscaleGroups.any { it.groupId == groupId }) {
+            "Unknown grayscale group: $groupId"
+        }
         val updated = settings.grayscaleGroups.map {
             if (it.groupId == groupId) it.copy(isActive = enable) else it
         }

@@ -33,6 +33,7 @@ import java.util.Calendar
 class ReelBlocker : BaseBlocker() {
 
     companion object {
+        private const val TIMER_NOTIFICATION_ID = 1003
         const val INTENT_ACTION_REFRESH_REEL_BLOCKER = "neth.iecal.curbox.refresh.reelblocker"
         const val INTENT_ACTION_REFRESH_REEL_BLOCKER_COOLDOWN =
             "neth.iecal.curbox.refresh.reelblocker.cooldown"
@@ -126,7 +127,9 @@ class ReelBlocker : BaseBlocker() {
 
 
     fun applyCooldown(viewId: String, endTime: Long) {
-        notificationManager.startTimer(totalMillis = endTime - SystemClock.uptimeMillis(), timerId = viewId, title = service.getString(R.string.notification_remaining_usage_reels_lockdown))
+        val now = SystemClock.uptimeMillis()
+        if (endTime <= now) return
+        notificationManager.startTimer(totalMillis = endTime - now, timerId = viewId, title = service.getString(R.string.notification_remaining_usage_reels_lockdown))
         cooldownViewIdsList[viewId] = endTime
     }
 
@@ -134,7 +137,9 @@ class ReelBlocker : BaseBlocker() {
     fun setupBlocker(service: BaseBlockingService) {
         this.service = service
 
-        notificationManager = TimerNotification(service)
+        if (!this::notificationManager.isInitialized) {
+            notificationManager = TimerNotification(service, TIMER_NOTIFICATION_ID)
+        }
 
         settingsJob?.cancel()
         countJob?.cancel()
@@ -206,6 +211,7 @@ class ReelBlocker : BaseBlocker() {
                         "selected_time",
                         reelBlockerConfig.warningScreenConfig.timeInterval
                     )
+                    if (interval <= 0L) return
                     val currentUptime = SystemClock.uptimeMillis()
                     val endTime = if (interval > Long.MAX_VALUE - currentUptime) {
                         Long.MAX_VALUE

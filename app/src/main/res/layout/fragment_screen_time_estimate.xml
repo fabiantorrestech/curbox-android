@@ -28,70 +28,79 @@
             android:textSize="9sp" />
     </HorizontalScrollView>
 
-    <LinearLayout
-        android:id="@+id/linearLayout"
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="start"
-        android:orientation="vertical"
-        android:padding="24dp"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        android:overScrollMode="never"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextView
+        <LinearLayout
+            android:id="@+id/linearLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:gravity="center"
-            android:text="@string/how_many_hours_a_day_do"
-            android:textAlignment="textStart"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="55sp"
-            android:textStyle="bold" />
+            android:gravity="start|center_vertical"
+            android:orientation="vertical"
+            android:padding="24dp">
 
-        <TextView
-            android:id="@+id/tv_hours_display"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/sample_usage_4_hours"
-            android:textColor="?attr/colorPrimary"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:gravity="center"
+                android:text="@string/how_many_hours_a_day_do"
+                android:textAlignment="textStart"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="55sp"
+                android:textStyle="bold" />
 
-        <com.google.android.material.slider.Slider
-            android:id="@+id/hours_slider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="-12dp"
-            android:layout_marginTop="16dp"
-            android:stepSize="1.0"
-            android:value="4.0"
-            android:valueFrom="1.0"
-            android:valueTo="16.0" />
+            <TextView
+                android:id="@+id/tv_hours_display"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/sample_usage_4_hours"
+                android:textColor="?attr/colorPrimary"
+                android:textSize="24sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/tv_reality_subtext"
-            style="@style/TextAppearance.Material3.BodyLarge"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:lineSpacingMultiplier="1.2"
-            android:text="@string/over_a_year_that_is_60"
-            android:textAlignment="textStart"
-            android:textAllCaps="false"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            <com.google.android.material.slider.Slider
+                android:id="@+id/hours_slider"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="-12dp"
+                android:layout_marginTop="16dp"
+                android:stepSize="1.0"
+                android:value="4.0"
+                android:valueFrom="1.0"
+                android:valueTo="16.0" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_action"
-            style="@style/Widget.Material3.Button"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/i_want_my_time_back" />
+            <TextView
+                android:id="@+id/tv_reality_subtext"
+                style="@style/TextAppearance.Material3.BodyLarge"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:lineSpacingMultiplier="1.2"
+                android:text="@string/over_a_year_that_is_60"
+                android:textAlignment="textStart"
+                android:textAllCaps="false"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
-    </LinearLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_action"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="@string/i_want_my_time_back" />
+
+        </LinearLayout>
+    </ScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

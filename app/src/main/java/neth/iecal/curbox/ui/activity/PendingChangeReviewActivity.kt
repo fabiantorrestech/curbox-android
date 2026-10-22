@@ -10,6 +10,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.R
 import neth.iecal.curbox.utils.DataStoreManager
 import neth.iecal.curbox.utils.SettingsChangeDelayUtils
@@ -52,10 +54,24 @@ class PendingChangeReviewActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         readExtras(intent)
         showDialog()
+        lifecycleScope.launch {
+            DataStoreManager(applicationContext).settings.collect { settings ->
+                val pending = settings.settingsChangeDelayConfig2.pendingChanges
+                    .find { it.field == fieldName }
+                if (pending == null || pending.appliesAtMs != appliesAtMs) {
+                    finish()
+                } else {
+                    tamperGated = settings.settingsChangeDelayConfig2.requireTamperProtectionOff &&
+                        settings.antiUninstallConfig2.isEnabled
+                    dialog?.setMessage(buildMessage())
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         readExtras(intent)
         dialog?.setMessage(buildMessage())
     }
@@ -103,9 +119,12 @@ class PendingChangeReviewActivity : AppCompatActivity() {
         val field = fieldName
         lifecycleScope.launch {
             try {
-                DataStoreManager(applicationContext).cancelPendingSettingsChange(field)
+                DataStoreManager(applicationContext).cancelPendingSettingsChange(field, appliesAtMs)
                 Toast.makeText(applicationContext, R.string.change_delay_cancelled_toast, Toast.LENGTH_SHORT).show()
-            } catch (_: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashLogger(applicationContext).logNonFatalError(e)
             }
             finish()
         }

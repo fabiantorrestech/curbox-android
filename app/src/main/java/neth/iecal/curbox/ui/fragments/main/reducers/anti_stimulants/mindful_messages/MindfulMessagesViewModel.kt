@@ -20,7 +20,7 @@ class MindfulMessagesViewModel(application: Application) : AndroidViewModel(appl
 
     init {
         viewModelScope.launch {
-            dataStoreManager.settings.collectLatest { settings ->
+            dataStoreManager.settingsForEditing.collectLatest { settings ->
                 _configState.value = settings.mindfulMessageConfig
             }
         }

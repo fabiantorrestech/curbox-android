@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.*
 
 class TimerNotification(
     private val context: Context,
-    private val notificationId: Int = 1001
+    private val notificationId: Int
 ) {
 
     enum class TimerState { IDLE, RUNNING, FINISHED }

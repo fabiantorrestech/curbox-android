@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -60,6 +61,8 @@ class WarningActivity : AppCompatActivity() {
     private var scannedValidDuration = -1L
     private var adaptiveMathChallenge: AdaptiveMathChallenge? = null
     private var isAdaptiveMathComplete = false
+    private var mathRetryTimer: CountDownTimer? = null
+    private var mathRetryEndsAtMs = 0L
     private var isFocusGoalRequired = false
     private var isFocusGoalVerified = true
     private var isPrimaryUnlockActionReady = false
@@ -95,6 +98,7 @@ class WarningActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        mathRetryEndsAtMs = savedInstanceState?.getLong(KEY_MATH_RETRY_ENDS_AT_MS) ?: 0L
         sendWarningScreenVisibility(true)
 
         val mode = intent.getIntExtra("mode", 0)
@@ -472,9 +476,11 @@ class WarningActivity : AppCompatActivity() {
             }
         }
         showAdaptiveMathProblem(challenge)
+        if (isMathRetryWaiting()) startMathRetryCountdown()
     }
 
     private fun submitAdaptiveMathAnswer() {
+        if (isMathRetryWaiting()) return
         val challenge = adaptiveMathChallenge ?: return
         val answer = binding.mathInputEdit.text
             ?.toString()
@@ -503,8 +509,40 @@ class WarningActivity : AppCompatActivity() {
         binding.mathInputEdit.text?.clear()
         if (!result.wasCorrect) {
             binding.mathInputLayout.error = getString(R.string.warning_math_incorrect)
+            mathRetryEndsAtMs = SystemClock.elapsedRealtime() + MATH_RETRY_DELAY_MS
+            startMathRetryCountdown()
         }
         showAdaptiveMathProblem(challenge)
+    }
+
+    private fun isMathRetryWaiting(): Boolean = SystemClock.elapsedRealtime() < mathRetryEndsAtMs
+
+    private fun startMathRetryCountdown() {
+        mathRetryTimer?.cancel()
+        val remainingMs = (mathRetryEndsAtMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        setPrimaryUnlockActionReady(false)
+        showMathRetryRemaining(remainingMs)
+        mathRetryTimer = object : CountDownTimer(remainingMs, 1000L) {
+            override fun onTick(millisUntilFinished: Long) {
+                showMathRetryRemaining(millisUntilFinished)
+            }
+
+            override fun onFinish() {
+                mathRetryEndsAtMs = 0L
+                mathRetryTimer = null
+                binding.btnProceed.setText(R.string.warning_math_check_answer)
+                setPrimaryUnlockActionReady(true)
+            }
+        }.start()
+    }
+
+    private fun showMathRetryRemaining(remainingMs: Long) {
+        val seconds = ((remainingMs + 999L) / 1000L).toInt()
+        binding.btnProceed.text = resources.getQuantityString(
+            R.plurals.warning_math_retry_in,
+            seconds,
+            seconds
+        )
     }
 
     private fun showAdaptiveMathProblem(challenge: AdaptiveMathChallenge) {
@@ -519,6 +557,7 @@ class WarningActivity : AppCompatActivity() {
     private fun setPrimaryUnlockActionReady(isReady: Boolean) {
         isPrimaryUnlockActionReady = isReady
         binding.btnProceed.isEnabled = isReady &&
+            !isMathRetryWaiting() &&
             (!isFocusGoalRequired || isFocusGoalVerified)
     }
 
@@ -658,11 +697,17 @@ class WarningActivity : AppCompatActivity() {
         stopNfcUnlockScan()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putLong(KEY_MATH_RETRY_ENDS_AT_MS, mathRetryEndsAtMs)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onDestroy() {
         sendWarningScreenVisibility(false)
         super.onDestroy()
         stopNfcUnlockScan()
         proceedTimer?.cancel()
+        mathRetryTimer?.cancel()
         vibrator?.cancel()
         dialog?.dismiss()
     }
@@ -754,6 +799,8 @@ class WarningActivity : AppCompatActivity() {
     }
 
     private companion object {
+        const val KEY_MATH_RETRY_ENDS_AT_MS = "math_retry_ends_at_ms"
+        const val MATH_RETRY_DELAY_MS = 15_000L
         const val MIN_ADAPTIVE_MATH_QUESTIONS = 1
         const val MAX_ADAPTIVE_MATH_QUESTIONS = 10
         const val MIN_ADAPTIVE_MATH_LEVEL = 1

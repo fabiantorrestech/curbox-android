@@ -11,7 +11,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import neth.iecal.curbox.data.models.PendingSettingsChange
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import neth.iecal.curbox.CrashLogger
+import neth.iecal.curbox.data.models.SettingsChangeDelayConfig
 import neth.iecal.curbox.utils.DataStoreManager
 
 /**
@@ -20,19 +25,30 @@ import neth.iecal.curbox.utils.DataStoreManager
  */
 class PendingSettingsChangeJob : JobService() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var worker: Job? = null
 
     override fun onStartJob(params: JobParameters?): Boolean {
-        scope.launch {
+        worker = scope.launch {
+            var retry = false
             try {
                 DataStoreManager(applicationContext).applyDuePendingChanges()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashLogger(applicationContext).logNonFatalError(e)
+                retry = true
             } finally {
-                jobFinished(params, false)
+                if (currentCoroutineContext().isActive) jobFinished(params, retry)
             }
         }
         return true
     }
 
-    override fun onStopJob(params: JobParameters?): Boolean = true
+    override fun onStopJob(params: JobParameters?): Boolean {
+        worker?.cancel()
+        worker = null
+        return true
+    }
 
     override fun onDestroy() {
         scope.cancel()
@@ -42,14 +58,13 @@ class PendingSettingsChangeJob : JobService() {
     companion object {
         private const val JOB_ID = 7713
 
-        fun schedule(context: Context, changes: List<PendingSettingsChange>) {
+        fun schedule(context: Context, config: SettingsChangeDelayConfig, tamperProtectionEnabled: Boolean) {
             val appContext = context.applicationContext
             val scheduler =
                 appContext.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
             scheduler.cancel(JOB_ID)
             val now = System.currentTimeMillis()
-            val nextDeadline = changes.map { it.appliesAtMs }.filter { it > now }.minOrNull()
-                ?: return
+            val nextDeadline = config.nextCheckAtMs(now, tamperProtectionEnabled) ?: return
             val delayMs = nextDeadline - now
             scheduler.schedule(
                 JobInfo.Builder(

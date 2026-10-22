@@ -16,6 +16,7 @@ data class Settings(
     val keywordBlockerConfig: KeywordBlocker = KeywordBlocker(),
     val isReelCounterOn: Boolean = true,
     val grayscaleGroups: List<GrayscaleGroup> = listOf(),
+    val usageBackgroundArt: String = "",
     val usageTrackerIgnoredApps: List<String> = listOf(),
     val isAppUsageTrackingEnabled: Boolean = true,
     val isWebsiteUsageTrackingEnabled: Boolean = true,

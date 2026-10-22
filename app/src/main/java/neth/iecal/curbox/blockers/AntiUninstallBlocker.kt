@@ -4,16 +4,19 @@ import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.R
 import neth.iecal.curbox.blockers.uihider.NodeFinder
 import neth.iecal.curbox.data.models.AntiUninstallConfig
 import neth.iecal.curbox.services.AppBlockerService
 import neth.iecal.curbox.services.BaseBlockingService
 import neth.iecal.curbox.utils.AntiUninstallManager
+import neth.iecal.curbox.utils.ServiceProtectionManager
 import java.util.Locale
 
 
@@ -149,10 +152,15 @@ class AntiUninstallBlocker : BaseBlocker() {
     }
 
     private fun finishUnlock() {
-        AntiUninstallManager.removeProtection(service)
         CoroutineScope(Dispatchers.IO).launch {
-            service.dataStoreManager.updateAntiUninstallConfig {
-                it.copy(isEnabled = false, unlockRequestedAtMs = 0L)
+            try {
+                service.dataStoreManager.updateAntiUninstallConfig {
+                    it.copy(isEnabled = false, unlockRequestedAtMs = 0L)
+                }
+                ServiceProtectionManager.removeDeviceAdmin(service)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                CrashLogger(service).logNonFatalError(e)
             }
         }
     }

@@ -57,4 +57,12 @@ data class SettingsChangeDelayConfig(
         /** Two days. Keeps the user from locking themselves out with an absurd delay. */
         const val MAX_DELAY_MINUTES = 2880
     }
+
+    fun nextCheckAtMs(nowMs: Long, tamperProtectionEnabled: Boolean): Long? {
+        val blocked = requireTamperProtectionOff && tamperProtectionEnabled
+        return pendingChanges.asSequence()
+            .map { it.appliesAtMs }
+            .filter { !blocked || it > nowMs }
+            .minOrNull()?.coerceAtLeast(nowMs)
+    }
 }

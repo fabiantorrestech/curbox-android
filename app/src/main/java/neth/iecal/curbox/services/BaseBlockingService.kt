@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.R
 import neth.iecal.curbox.utils.DataStoreManager
 import neth.iecal.curbox.utils.ServiceProtectionManager
@@ -65,7 +67,10 @@ open class BaseBlockingService : AccessibilityService() {
         // Lands settings changes whose delay has run out, even when the UI is never opened
         try {
             dataStoreManager.applyDuePendingChanges()
-        } catch (_: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            CrashLogger(this).logNonFatalError(e)
         }
         try {
             val config = dataStoreManager.settings.first().serviceProtectionConfig

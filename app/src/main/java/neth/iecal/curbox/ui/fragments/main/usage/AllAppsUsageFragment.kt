@@ -147,25 +147,10 @@ class AllAppsUsageFragment : Fragment() {
             viewModel = ViewModelProvider(this)[AllAppsUsageViewModel::class.java]
             usageStatsHelper = UsageStatsHelper(requireContext().applicationContext)
 
-            val asciiArts = listOf(
-                R.string.ascii_brain,
-                R.string.ascii_aim,
-                R.string.ascii_star1,
-                R.string.ascii_star2,
-                R.string.ascii_kitty,
-                R.string.ascii_star3,
-                R.string.ascii_star4,
-                R.string.ascii_star5,
-                R.string.ascii_coolstars,
-                R.string.ascii_coolflower,
-                R.string.ascii_chillguy,
-                R.string.ascii_god,
-                R.string.ascii_jellyfish,
-                R.string.ascii_lotus,
-                R.string.ascii_sharks
-
-            )
-            binding.asciiArt.text = getString(asciiArts.random())
+            viewLifecycleOwner.lifecycleScope.launch {
+                val selectedArt = DataStoreManager(requireContext()).settings.first().usageBackgroundArt
+                applyBackgroundArt(selectedArt)
+            }
             binding.asciiArt.foreground = createAsciiFade()
 
             if (!PermissionUtils.hasAllRequiredPermissions(requireContext())) {
@@ -179,6 +164,10 @@ class AllAppsUsageFragment : Fragment() {
             val adapter = AppUsageAdapter(emptyList())
             binding.appUsageRecyclerView.layoutManager = LinearLayoutManager(requireContext())
             binding.appUsageRecyclerView.adapter = adapter
+
+            binding.langowageLink.setOnClickListener {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://langowage.site")))
+            }
 
 
             observeViewModel(adapter)
@@ -206,9 +195,24 @@ class AllAppsUsageFragment : Fragment() {
             binding.openMenu.setOnClickListener {
                 val popupMenu = PopupMenu(requireContext(), binding.openMenu)
                 popupMenu.menuInflater.inflate(R.menu.usage_tracker_options, popupMenu.menu)
+                popupMenu.menu.findItem(R.id.show_weekly_usage).isChecked =
+                    viewModel.chartScale.value == AppUsageChartScale.WEEKS
 
                 popupMenu.setOnMenuItemClickListener { item ->
                     when (item.itemId) {
+                        R.id.show_weekly_usage -> {
+                            viewModel.setChartScale(
+                                if (item.isChecked) AppUsageChartScale.DAYS
+                                else AppUsageChartScale.WEEKS
+                            )
+                            true
+                        }
+
+                        R.id.select_background_art -> {
+                            showBackgroundArtDialog()
+                            true
+                        }
+
                         R.id.select_ignored -> {
                             lifecycleScope.launch(Dispatchers.IO) {
                                 val ignoredApps =
@@ -820,7 +824,52 @@ class AllAppsUsageFragment : Fragment() {
         }
 
 
+        private val backgroundArts by lazy {
+            R.string::class.java.fields
+                .filter { it.name.startsWith("ascii") && it.type == Int::class.javaPrimitiveType }
+                .sortedBy { it.name }
+                .map { it.name to it.getInt(null) }
+        }
+        private var backgroundArtDialog: androidx.appcompat.app.AlertDialog? = null
+
+        private fun applyBackgroundArt(artName: String) {
+            val art = backgroundArts.find { it.first == artName }
+                ?: backgroundArts.randomOrNull()
+            _binding?.asciiArt?.setText(art?.second ?: R.string.angel_fallen)
+        }
+
+        private fun showBackgroundArtDialog() {
+            viewLifecycleOwner.lifecycleScope.launch {
+                val dataStore = DataStoreManager(requireContext())
+                val selectedArt = dataStore.settings.first().usageBackgroundArt
+                val choices = listOf("" to getString(R.string.usage_background_art_random)) +
+                    backgroundArts.map { (name, _) ->
+                        name to name.removePrefix("ascii_").replace('_', ' ')
+                            .replaceFirstChar { it.titlecase(Locale.getDefault()) }
+                    }
+                var selectedIndex = choices.indexOfFirst { it.first == selectedArt }.coerceAtLeast(0)
+                backgroundArtDialog?.dismiss()
+                backgroundArtDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.usage_select_background_art)
+                    .setSingleChoiceItems(choices.map { it.second }.toTypedArray(), selectedIndex) { _, which ->
+                        selectedIndex = which
+                        applyBackgroundArt(choices[which].first)
+                    }
+                    .setPositiveButton(R.string.okay) { _, _ ->
+                        val artName = choices[selectedIndex].first
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            dataStore.updateUsageBackgroundArt(artName)
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel) { _, _ -> applyBackgroundArt(selectedArt) }
+                    .setOnCancelListener { applyBackgroundArt(selectedArt) }
+                    .show()
+            }
+        }
+
         override fun onDestroyView() {
+            backgroundArtDialog?.dismiss()
+            backgroundArtDialog = null
             chartTransitionAnimator?.cancel()
             _binding?.main?.let(BlurFadeAnimator::reset)
             chartTransitionActive = false

@@ -24,47 +24,51 @@ class AutoDndViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         viewModelScope.launch {
-            dataStoreManager.settings.collectLatest { settings ->
+            dataStoreManager.settingsForEditing.collectLatest { settings ->
                 _groups.value = settings.autoDndGroups
             }
         }
     }
 
-    fun addGroup(group: AutoDndGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.autoDndGroups.toMutableList()
-            currentGroups.add(group)
+    fun addGroup(group: AutoDndGroup) = viewModelScope.launch {
+        addGroupAndWait(group)
+    }
+
+    suspend fun addGroupAndWait(group: AutoDndGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.autoDndGroups.toMutableList()
+        currentGroups.add(group)
+        updateGroups(currentGroups)
+    }
+
+    fun removeGroup(group: AutoDndGroup) = viewModelScope.launch {
+        removeGroupAndWait(group)
+    }
+
+    suspend fun removeGroupAndWait(group: AutoDndGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.autoDndGroups.toMutableList()
+        currentGroups.removeIf { it.groupId == group.groupId }
+        updateGroups(currentGroups)
+    }
+
+    fun updateGroup(group: AutoDndGroup) = viewModelScope.launch {
+        updateGroupAndWait(group)
+    }
+
+    suspend fun updateGroupAndWait(group: AutoDndGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.autoDndGroups.toMutableList()
+        val index = currentGroups.indexOfFirst { it.groupId == group.groupId }
+        if (index != -1) {
+            currentGroups[index] = group
             updateGroups(currentGroups)
         }
     }
 
-    fun removeGroup(group: AutoDndGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.autoDndGroups.toMutableList()
-            currentGroups.removeIf { it.groupId == group.groupId }
-            updateGroups(currentGroups)
-        }
-    }
-
-    fun updateGroup(group: AutoDndGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.autoDndGroups.toMutableList()
-            val index = currentGroups.indexOfFirst { it.groupId == group.groupId }
-            if (index != -1) {
-                currentGroups[index] = group
-                updateGroups(currentGroups)
-            }
-        }
-    }
-
-    private fun updateGroups(newGroups: List<AutoDndGroup>) {
-        viewModelScope.launch {
-            dataStoreManager.updateAutoDndGroups(newGroups)
-            requestFocusBlockerRefresh()
-        }
+    private suspend fun updateGroups(newGroups: List<AutoDndGroup>) {
+        dataStoreManager.updateAutoDndGroups(newGroups)
+        requestFocusBlockerRefresh()
     }
 
     private fun requestFocusBlockerRefresh() {

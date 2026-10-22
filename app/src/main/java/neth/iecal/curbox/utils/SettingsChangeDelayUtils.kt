@@ -5,8 +5,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.R
 import neth.iecal.curbox.data.models.GatedSettingsField
+import neth.iecal.curbox.data.models.Settings
+
+internal fun Settings.restoreExpiredTemporaryDisables(nowMs: Long): Settings = copy(
+    blockedAppGroups = blockedAppGroups.map { group ->
+        if (group.temporarilyDisabledUntilMs in 1..nowMs)
+            group.copy(isActive = true, temporarilyDisabledUntilMs = 0L) else group
+    },
+    keywordBlockerConfig = keywordBlockerConfig.copy(keywordGroups = keywordBlockerConfig.keywordGroups.map { group ->
+        if (group.temporarilyDisabledUntilMs in 1..nowMs)
+            group.copy(isActive = true, temporarilyDisabledUntilMs = 0L) else group
+    }),
+    reelBlockerConfig = if (reelBlockerConfig.temporarilyDisabledUntilMs in 1..nowMs)
+        reelBlockerConfig.copy(isActive = true, temporarilyDisabledUntilMs = 0L) else reelBlockerConfig
+)
 
 /**
  * Small helpers around the settings change delay. The gate itself lives in
@@ -25,7 +41,10 @@ object SettingsChangeDelayUtils {
                     applyDuePendingChanges()
                     restoreDueTemporaryAppGroups()
                 }
-            } catch (_: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashLogger(appContext).logNonFatalError(e)
             }
         }
     }

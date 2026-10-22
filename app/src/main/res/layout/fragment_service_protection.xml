@@ -340,8 +340,14 @@
                 android:layout_marginTop="8dp"
                 android:paddingVertical="12dp"
                 android:text="@string/service_protection_repair_now" />
+        </LinearLayout>
 
-            <!-- Advanced: device owner -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Advanced: device admin -->
             <TextView
                 android:id="@+id/text_device_owner_header"
                 android:layout_width="wrap_content"
@@ -360,6 +366,25 @@
                 android:layout_height="wrap_content"
                 android:paddingVertical="12dp"
                 android:text="@string/service_protection_device_owner"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_remove_device_admin"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingVertical="12dp"
+                android:text="@string/service_protection_remove_device_admin"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/text_device_admin_locked"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/service_protection_admin_locked"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:visibility="gone" />
         </LinearLayout>
 

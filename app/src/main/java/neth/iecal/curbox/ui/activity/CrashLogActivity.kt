@@ -3,8 +3,13 @@ package neth.iecal.curbox.ui.activity
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import neth.iecal.curbox.R
 import neth.iecal.curbox.databinding.ActivityCrashLogBinding
+import neth.iecal.curbox.utils.CrashLogPreview
 import java.io.File
 
 class CrashLogActivity : AppCompatActivity() {
@@ -17,22 +22,17 @@ class CrashLogActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         val logFile = File(filesDir, "crash_log.txt")
-        val content = if (logFile.exists()) {
-            try {
-                val text = logFile.readText()
-                if (text.length > 50000) {
-                    "...${text.takeLast(50000)}"
-                } else {
-                    text
-                }
-            } catch (e: Exception) {
-                "Error reading crash logs."
+        var content = getString(R.string.crash_logs_none_available)
+        lifecycleScope.launch {
+            val preview = withContext(Dispatchers.IO) {
+                runCatching { if (logFile.exists()) CrashLogPreview.read(logFile) else null }
             }
-        } else {
-            "No crash logs available."
+            content = preview.fold(
+                onSuccess = { it ?: getString(R.string.crash_logs_none_available) },
+                onFailure = { getString(R.string.crash_logs_read_error) }
+            )
+            binding.tvCrashLogs.text = content
         }
-
-        binding.tvCrashLogs.text = content
 
         binding.btnShare.setOnClickListener {
             val intent = Intent(Intent.ACTION_SEND).apply {

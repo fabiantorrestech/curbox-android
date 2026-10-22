@@ -77,4 +77,53 @@ class ReelBlockerRestrictionComparatorTest {
             )
         )
     }
+    @Test
+    fun expandingAllowedHoursIsWeaker() {
+        val old = scheduledReels(9, 10)
+        val expanded = scheduledReels(0, 24)
+        assertFalse(RestrictionComparator.reelBlocker(old, expanded))
+        assertTrue(RestrictionComparator.reelBlocker(expanded, old))
+    }
+
+    @Test
+    fun movingAllowedHoursIsIncomparable() {
+        assertFalse(RestrictionComparator.reelBlocker(scheduledReels(9, 10), scheduledReels(10, 11)))
+    }
+
+    @Test
+    fun zeroUsageAndCountLimitsAreUnlimited() {
+        val unlimited = scheduledReels(0, 24)
+        val usageLimited = unlimited.copy(config = unlimited.config!!.copy(
+            usage = ReelUsageConfig(uniformLimit = 30)
+        ))
+        val countLimited = unlimited.copy(config = unlimited.config!!.copy(
+            reelCount = neth.iecal.curbox.data.models.ReelCountConfig(uniformLimit = 10)
+        ))
+        assertFalse(RestrictionComparator.reelBlocker(usageLimited, unlimited))
+        assertFalse(RestrictionComparator.reelBlocker(countLimited, unlimited))
+        assertTrue(RestrictionComparator.reelBlocker(unlimited, usageLimited))
+        assertTrue(RestrictionComparator.reelBlocker(unlimited, countLimited))
+    }
+
+    @Test
+    fun dailyLimitsCannotBeRemoved() {
+        val old = scheduledReels(0, 24)
+        val limited = old.copy(config = old.config!!.copy(
+            usage = ReelUsageConfig(isDailyUniform = false, dailyLimits = LongArray(7) { 30 }),
+            reelCount = neth.iecal.curbox.data.models.ReelCountConfig(
+                isDailyUniform = false, dailyLimits = IntArray(7) { 10 }
+            )
+        ))
+        assertFalse(RestrictionComparator.reelBlocker(limited, old))
+        assertTrue(RestrictionComparator.reelBlocker(old, limited))
+    }
+
+    private fun scheduledReels(start: Int, end: Int) = ReelBlocker(
+        isActive = true,
+        config = neth.iecal.curbox.data.models.ReelBlockerConfig(
+            schedule = neth.iecal.curbox.data.models.ReelTimeConfig(
+                everydayIntervals = mutableListOf(neth.iecal.curbox.data.models.TimeInterval(start, 0, end, 0))
+            )
+        )
+    )
 }

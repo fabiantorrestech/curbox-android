@@ -16,6 +16,8 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.data.models.AppTimeConfig
 import neth.iecal.curbox.data.models.GrayscaleGroup
 import neth.iecal.curbox.data.models.TimeInterval
@@ -93,9 +95,11 @@ class CreateGrayscaleGroupFragment : Fragment() {
 
                         binding.btnDeleteGroup.visibility = View.VISIBLE
                         binding.btnDeleteGroup.setOnClickListener {
-                            viewModel.removeGroup(group)
-                            Toast.makeText(requireContext(), R.string.group_deleted, Toast.LENGTH_SHORT).show()
-                            requireActivity().finish()
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                viewModel.removeGroupAndWait(group)
+                                Toast.makeText(requireContext(), R.string.group_deleted, Toast.LENGTH_SHORT).show()
+                                requireActivity().finish()
+                            }
                         }
 
                         viewModel.currentTimeConfig = group.timeConfig.copy()
@@ -137,14 +141,26 @@ class CreateGrayscaleGroupFragment : Fragment() {
                 timeConfig = viewModel.currentTimeConfig
             )
 
-            if (isEditingRecord && targetExistingGroup != null) {
-                viewModel.updateGroup(newGroup)
-            } else {
-                viewModel.addGroup(newGroup)
-            }
+            binding.fabSaveGroup.isEnabled = false
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    if (isEditingRecord && targetExistingGroup != null) {
+                        viewModel.updateGroupAndWait(newGroup)
+                    } else {
+                        viewModel.addGroupAndWait(newGroup)
+                    }
 
-            Toast.makeText(requireContext(), getString(R.string.group_saved_successfully), Toast.LENGTH_SHORT).show()
-            requireActivity().finish()
+                    Toast.makeText(requireContext(), getString(R.string.group_saved_successfully), Toast.LENGTH_SHORT).show()
+                    requireActivity().finish()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CrashLogger(requireContext().applicationContext).logNonFatalError(e)
+                    Toast.makeText(requireContext(), R.string.settings_save_failed, Toast.LENGTH_SHORT).show()
+                } finally {
+                    _binding?.fabSaveGroup?.isEnabled = true
+                }
+            }
         }
     }
     

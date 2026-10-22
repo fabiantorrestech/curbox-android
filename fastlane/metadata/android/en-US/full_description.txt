@@ -5,6 +5,7 @@ Curbox (formerly Digipauwse) is a free and open source app blocker and screen ti
 • <b>App and Website Blocker</b>: block any distracting app or website completely
 • <b>URL Path Blocking</b>: block just one part of a site, like m.youtube.com/shorts, while the rest of YouTube still works
 • <b>Short Form Content Blocker</b>: shut off Instagram Reels and YouTube Shorts so the feed stops pulling you back
+• <b>Instagram DM Exception</b>: choose to allow Reels opened from your DM inbox
 • <b>Tamper Protection</b>: make it difficult to uninstall Curbox or turn off its blocking service
 • <b>Settings Change Delay</b>: make weaker rule changes wait before they take effect, giving you time to reconsider
 
@@ -15,19 +16,20 @@ Granular UI Hiding lets you remove the trap inside an app without losing the app
 
 <b>Stay focused</b>
 
-• <b>Focus Mode</b>: pause apps and websites for a set time so you can study or work in peace
+• <b>Focus Mode</b>: pause apps and websites for a set time, or use a Pomodoro timer for work and breaks
 • <b>Scheduled DND</b>: turn on Do Not Disturb automatically at the hours you set
 • <b>App Specific Grayscale</b>: drain the color out of Instagram while your Camera stays full color, so dull apps lose their pull
 • <b>Scheduled Usage Limits</b>: set when a group is active and how much use is available during that time
-• <b>Mindful Messages</b>: gentle nudges that run as overlay when you use an app
+• <b>Mindful Messages</b>: gentle overlay nudges with custom colors and variables to make each message your own
+• <b>Warning Messages</b>: show a random message when you open a blocked app
 • <b>Attention Span Tracking</b>: see how long you stay with short form videos before moving on
 
 
 <b>See your time</b>
 
-• <b>Usage Analytics</b>: clear breakdowns of how long you spend in each app and website
+• <b>Usage Analytics</b>: daily and weekly views of time spent in each app and website, with a background you can choose
 • <b>Focus Statistics</b>: track your focus sessions and your progress over time
-• <b>Live Scroll Counter</b>: a real time count of how many short videos you have scrolled
+• <b>Live Scroll Counter</b>: count short videos as you scroll, choose counter colors, or show it only at checkpoints
 • <b>Session Timer</b>: a live timer of how long the current app has been open
 • <b>Home Screen Widgets</b>: keep your stats and quick controls on your home screen
 
@@ -39,11 +41,16 @@ When you use all the time available in a schedule, you decide what it takes to g
 • <b>Strict Blockade</b>: no access at all
 • <b>Timed Unlocks</b>: each unlock lasts a short set time, like 5 minutes
 • <b>Dynamic Unlocks</b>: pick the unlock length yourself each time
-• <b>QR or Barcode Unlock</b>: scan a real barcode, like one on a book, so you have to get up and move
+• <b>QR or Barcode Unlock</b>: scan a real barcode, like one on a book, with a flashlight option for dark rooms
 • <b>Sentence Retyping</b>: type out a full sentence before the app will open
 • <b>Unlock Limits</b>: cap how many unlocks you get every few hours
 • <b>NFC Unlock</b>: use a physical NFC tag to make unlocking a deliberate action
-• <b>Adaptive Math</b>: solve a changing math challenge before you can unlock
+• <b>Adaptive Math</b>: solve a changing math challenge before you can unlock, with a wait after wrong answers
+
+
+<b>Keep your setup</b>
+
+Back up and restore your Curbox data so you can keep your setup when you need it again.
 
 
 <b>Built for developers</b>

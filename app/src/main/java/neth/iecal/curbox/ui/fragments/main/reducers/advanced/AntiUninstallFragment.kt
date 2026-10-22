@@ -23,12 +23,14 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.radiobutton.MaterialRadioButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import neth.iecal.curbox.R
 import neth.iecal.curbox.data.models.AntiUninstallConfig
 import neth.iecal.curbox.data.models.AntiUninstallMode
 import neth.iecal.curbox.utils.AntiUninstallManager
 import neth.iecal.curbox.utils.DataStoreManager
+import neth.iecal.curbox.utils.ServiceProtectionManager
 import neth.iecal.curbox.utils.ViewUtils
 import java.util.concurrent.TimeUnit
 
@@ -321,9 +323,14 @@ class AntiUninstallFragment : Fragment() {
     }
 
     private fun finishProtection() {
-        AntiUninstallManager.removeProtection(requireContext())
         viewLifecycleOwner.lifecycleScope.launch {
             dataStore.updateAntiUninstallConfig { it.copy(isEnabled = false, unlockRequestedAtMs = 0L) }
+            try {
+                ServiceProtectionManager.removeDeviceAdmin(requireContext())
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Toast.makeText(requireContext(), R.string.service_protection_admin_removal_failed, Toast.LENGTH_LONG).show()
+            }
         }
     }
 

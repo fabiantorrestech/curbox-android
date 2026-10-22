@@ -25,47 +25,51 @@ class GrayscaleViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         viewModelScope.launch {
-            dataStoreManager.settings.collectLatest { settings ->
+            dataStoreManager.settingsForEditing.collectLatest { settings ->
                 _groups.value = settings.grayscaleGroups
             }
         }
     }
 
-    fun addGroup(group: GrayscaleGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.grayscaleGroups.toMutableList()
-            currentGroups.add(group)
+    fun addGroup(group: GrayscaleGroup) = viewModelScope.launch {
+        addGroupAndWait(group)
+    }
+
+    suspend fun addGroupAndWait(group: GrayscaleGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.grayscaleGroups.toMutableList()
+        currentGroups.add(group)
+        updateGroups(currentGroups)
+    }
+
+    fun removeGroup(group: GrayscaleGroup) = viewModelScope.launch {
+        removeGroupAndWait(group)
+    }
+
+    suspend fun removeGroupAndWait(group: GrayscaleGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.grayscaleGroups.toMutableList()
+        currentGroups.remove(group)
+        updateGroups(currentGroups)
+    }
+
+    fun updateGroup(group: GrayscaleGroup) = viewModelScope.launch {
+        updateGroupAndWait(group)
+    }
+
+    suspend fun updateGroupAndWait(group: GrayscaleGroup) {
+        val currentSettings = dataStoreManager.settingsForEditing.first()
+        val currentGroups = currentSettings.grayscaleGroups.toMutableList()
+        val index = currentGroups.indexOfFirst { it.groupId == group.groupId }
+        if (index != -1) {
+            currentGroups[index] = group
             updateGroups(currentGroups)
         }
     }
 
-    fun removeGroup(group: GrayscaleGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.grayscaleGroups.toMutableList()
-            currentGroups.remove(group)
-            updateGroups(currentGroups)
-        }
-    }
-
-    fun updateGroup(group: GrayscaleGroup) {
-        viewModelScope.launch {
-            val currentSettings = dataStoreManager.settings.first()
-            val currentGroups = currentSettings.grayscaleGroups.toMutableList()
-            val index = currentGroups.indexOfFirst { it.groupId == group.groupId }
-            if (index != -1) {
-                currentGroups[index] = group
-                updateGroups(currentGroups)
-            }
-        }
-    }
-
-    private fun updateGroups(newGroups: List<GrayscaleGroup>) {
-        viewModelScope.launch {
-            dataStoreManager.updateGrayscaleGroups(newGroups)
-            requestGrayscaleRefresh()
-        }
+    private suspend fun updateGroups(newGroups: List<GrayscaleGroup>) {
+        dataStoreManager.updateGrayscaleGroups(newGroups)
+        requestGrayscaleRefresh()
     }
 
     private fun requestGrayscaleRefresh() {

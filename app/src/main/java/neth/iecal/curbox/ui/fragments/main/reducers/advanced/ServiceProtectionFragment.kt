@@ -17,12 +17,14 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import neth.iecal.curbox.BuildConfig
 import neth.iecal.curbox.R
 import neth.iecal.curbox.hardcoded.OemAutostartIntents
 import neth.iecal.curbox.services.AppBlockerService
 import neth.iecal.curbox.services.ServiceWatchdogJob
+import neth.iecal.curbox.utils.AntiUninstallManager
 import neth.iecal.curbox.utils.DataStoreManager
 import neth.iecal.curbox.utils.PermissionUtils
 import neth.iecal.curbox.utils.ServiceProtectionManager
@@ -53,8 +55,11 @@ class ServiceProtectionFragment : Fragment() {
     private lateinit var btnSetupShizuku: MaterialButton
     private lateinit var deviceOwnerHeader: View
     private lateinit var btnDeviceOwner: MaterialButton
+    private lateinit var btnRemoveDeviceAdmin: MaterialButton
+    private lateinit var textDeviceAdminLocked: TextView
 
     private var isEnabled = false
+    private var tamperProtectionEnabled = false
 
     private val ticker = Handler(Looper.getMainLooper())
     private val tickRunnable = object : Runnable {
@@ -85,6 +90,8 @@ class ServiceProtectionFragment : Fragment() {
         btnSetupShizuku = view.findViewById(R.id.btn_setup_shizuku)
         deviceOwnerHeader = view.findViewById(R.id.text_device_owner_header)
         btnDeviceOwner = view.findViewById(R.id.btn_device_owner)
+        btnRemoveDeviceAdmin = view.findViewById(R.id.btn_remove_device_admin)
+        textDeviceAdminLocked = view.findViewById(R.id.text_device_admin_locked)
 
         view.findViewById<MaterialButton>(R.id.btn_back).setOnClickListener {
             requireActivity().onBackPressedDispatcher.onBackPressed()
@@ -103,11 +110,13 @@ class ServiceProtectionFragment : Fragment() {
         view.findViewById<MaterialButton>(R.id.btn_open_autostart).setOnClickListener { openAutostart() }
         view.findViewById<MaterialButton>(R.id.btn_repair_now).setOnClickListener { repairNow() }
         btnDeviceOwner.setOnClickListener { confirmDeviceOwner() }
+        btnRemoveDeviceAdmin.setOnClickListener { confirmRemoveDeviceAdmin() }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dataStore.settings.collect { settings ->
                     isEnabled = settings.serviceProtectionConfig.isEnabled
+                    tamperProtectionEnabled = settings.antiUninstallConfig2.isEnabled
                     switchProtection.isChecked = isEnabled
                     render()
                 }
@@ -178,9 +187,14 @@ class ServiceProtectionFragment : Fragment() {
 
         // Device owner needs Shizuku and the device admin receiver, which the
         // Play Store flavor strips along with anti uninstall
-        val deviceOwnerAvailable = shizukuOk && BuildConfig.SUPPORTS_ANTI_UNINSTALL
-        deviceOwnerHeader.isVisible = deviceOwnerAvailable
-        btnDeviceOwner.isVisible = deviceOwnerAvailable
+        val adminActive = BuildConfig.SUPPORTS_ANTI_UNINSTALL && AntiUninstallManager.isAdminActive(context)
+        val canSetDeviceOwner = isEnabled && shizukuOk && BuildConfig.SUPPORTS_ANTI_UNINSTALL &&
+            !ServiceProtectionManager.isDeviceOwner(context)
+        deviceOwnerHeader.isVisible = canSetDeviceOwner || adminActive
+        btnDeviceOwner.isVisible = canSetDeviceOwner
+        btnRemoveDeviceAdmin.isVisible = adminActive
+        btnRemoveDeviceAdmin.isEnabled = !tamperProtectionEnabled
+        textDeviceAdminLocked.isVisible = adminActive && tamperProtectionEnabled
     }
 
     private fun setRow(icon: ImageView, text: TextView, ok: Boolean, okText: String, badText: String) {
@@ -259,6 +273,31 @@ class ServiceProtectionFragment : Fragment() {
             .setPositiveButton(R.string.service_protection_continue) { _, _ ->
                 ServiceProtectionManager.setDeviceOwner(requireContext())
                 Toast.makeText(requireContext(), R.string.service_protection_repair_started, Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun confirmRemoveDeviceAdmin() {
+        if (tamperProtectionEnabled) return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.service_protection_remove_device_admin)
+            .setMessage(R.string.service_protection_remove_device_admin_warning)
+            .setNegativeButton(R.string.service_protection_cancel, null)
+            .setPositiveButton(R.string.service_protection_remove) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val context = requireContext()
+                    try {
+                        if (ServiceProtectionManager.removeDeviceAdmin(context)) {
+                            Toast.makeText(context, R.string.service_protection_admin_removal_started, Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, R.string.service_protection_admin_locked, Toast.LENGTH_LONG).show()
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Toast.makeText(context, R.string.service_protection_admin_removal_failed, Toast.LENGTH_LONG).show()
+                    }
+                    render()
+                }
             }
             .show()
     }

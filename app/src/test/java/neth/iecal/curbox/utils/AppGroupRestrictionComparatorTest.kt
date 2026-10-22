@@ -4,6 +4,8 @@ import neth.iecal.curbox.data.models.AppGroup
 import neth.iecal.curbox.data.models.AppGroupConfig
 import neth.iecal.curbox.data.models.AppTimeConfig
 import neth.iecal.curbox.data.models.AppUsageConfig
+import neth.iecal.curbox.data.models.GatedSettingsField
+import neth.iecal.curbox.data.models.Settings
 import neth.iecal.curbox.data.models.TimeInterval
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -30,6 +32,46 @@ class AppGroupRestrictionComparatorTest {
                 listOf(group(startHour = 10, usageMinutes = 60))
             )
         )
+    }
+
+    @Test
+    fun addingAppDoesNotOffsetShorterActiveSchedule() {
+        val proposed = group(startHour = 10, usageMinutes = 60).copy(
+            selectedPackages = oldGroup.selectedPackages + "another.app"
+        )
+        assertFalse(RestrictionComparator.appGroups(listOf(oldGroup), listOf(proposed)))
+    }
+
+    @Test
+    fun addingAppWithSameScheduleIsStricter() {
+        val proposed = oldGroup.copy(
+            selectedPackages = oldGroup.selectedPackages + "another.app"
+        )
+        assertTrue(RestrictionComparator.appGroups(listOf(oldGroup), listOf(proposed)))
+    }
+
+    @Test
+    fun removingAppIsWeakerEvenWithLongerActiveSchedule() {
+        val current = oldGroup.copy(
+            selectedPackages = listOf("example.app", "another.app")
+        )
+        val proposed = group(startHour = 8, usageMinutes = 60)
+        assertFalse(
+            RestrictionComparator.isSameOrStricter(
+                GatedSettingsField.APP_GROUPS,
+                Settings(blockedAppGroups = listOf(current)),
+                Settings(blockedAppGroups = listOf(proposed))
+            )
+        )
+    }
+
+    @Test
+    fun removingAppIsWeakerEvenWithLowerUsageAllowance() {
+        val current = oldGroup.copy(
+            selectedPackages = listOf("example.app", "another.app")
+        )
+        val proposed = group(startHour = 8, usageMinutes = 30)
+        assertFalse(RestrictionComparator.appGroups(listOf(current), listOf(proposed)))
     }
 
     @Test

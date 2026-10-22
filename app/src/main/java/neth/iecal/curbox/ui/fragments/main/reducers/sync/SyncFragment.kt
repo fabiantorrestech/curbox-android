@@ -33,7 +33,10 @@ class SyncFragment : Fragment() {
             requireActivity().onBackPressedDispatcher.onBackPressed()
         }
         controller = AccountController(v, this) {
-            scanLauncher.launch(ScanOptions().setOrientationLocked(true).setPrompt("Point at the pairing code"))
+            scanLauncher.launch(ScanOptions()
+                .setCaptureActivity(neth.iecal.curbox.ui.activity.PortraitCaptureActivity::class.java)
+                .setOrientationLocked(true)
+                .setPrompt("Point at the pairing code"))
         }
         controller.bind()
         return v

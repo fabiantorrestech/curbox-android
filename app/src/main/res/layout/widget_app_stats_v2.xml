@@ -11,23 +11,6 @@
         android:layout_height="match_parent"
         android:background="@drawable/widget_background">
 
-        <TextView
-            android:id="@+id/widget_ascii_art"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:alpha="0.35"
-            android:breakStrategy="simple"
-            android:ellipsize="none"
-            android:fontFamily="monospace"
-            android:gravity="top|end"
-            android:includeFontPadding="false"
-            android:lineSpacingMultiplier="0.8"
-            android:padding="8dp"
-            android:singleLine="false"
-            android:text="@string/ascii_star2"
-            android:textColor="?android:attr/textColorPrimary"
-            android:textSize="3sp" />
-
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"

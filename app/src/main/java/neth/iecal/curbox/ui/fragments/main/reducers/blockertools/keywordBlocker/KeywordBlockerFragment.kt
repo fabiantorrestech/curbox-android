@@ -45,9 +45,7 @@ class KeywordBlockerFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        if (!viewModel.keywordBlockerConfig.value.isActive) {
-            viewModel.setIsActive(true)
-        }
+        viewModel.activateIfNeeded()
         binding.rvKeywordGroups.layoutManager = LinearLayoutManager(requireContext())
         binding.rvKeywordGroups.adapter = adapter
         setupListeners()

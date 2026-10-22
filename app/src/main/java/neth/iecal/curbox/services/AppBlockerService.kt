@@ -225,31 +225,37 @@ class AppBlockerService : BaseBlockingService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cleanupFeature("event worker") { serviceScope.cancel() }
+        cleanupFeature("event channel") { eventChannel.cancel() }
+        cleanupFeature("website observation channel") { websiteObservationChannel.cancel() }
+
+        cleanupFeature("focus receivers") { focusModeBlocker.removeReceivers() }
+        cleanupFeature("focus mode") { focusModeBlocker.onDestroy() }
+        cleanupFeature("auto DND") { autoDnd.stop() }
+        cleanupFeature("reel blocker") { reelBlocker.removeReceivers() }
+        cleanupFeature("app blocker") { appBlocker.onDestroy() }
+        cleanupFeature("keyword blocker") { keywordBlocker.removeReceivers() }
+        cleanupFeature("grayscale") { grayScaleFilter.unregisterReceivers() }
+        if (BuildConfig.SUPPORTS_UI_HIDER) {
+            cleanupFeature("UI hider") { uiHider.removeReceivers() }
+            cleanupFeature("node picker") { nodePicker.removeReceivers() }
+        }
+        if (BuildConfig.SUPPORTS_ANTI_UNINSTALL) {
+            cleanupFeature("anti uninstall") { antiUninstallBlocker.onDestroy() }
+        }
+        cleanupFeature("mindful messages") { mindfulMessage.onDestroy() }
+        cleanupFeature("reel counter") { reelsCountTracker.onDestroy() }
+        cleanupFeature("reel usage") { reelUsageTracker.onDestroy() }
+        cleanupFeature("website usage") { websiteUsageTracker.onDestroy() }
+        cleanupFeature("app usage") { appUsageTracker.onDestroy() }
+    }
+
+    private inline fun cleanupFeature(name: String, cleanup: () -> Unit) {
         try {
-
-            focusModeBlocker.removeReceivers()
-            focusModeBlocker.onDestroy()
-            autoDnd.stop()
-            reelBlocker.removeReceivers()
-            appBlocker.onDestroy()
-            keywordBlocker.removeReceivers()
-            grayScaleFilter.unregisterReceivers()
-            if (BuildConfig.SUPPORTS_UI_HIDER) {
-                uiHider.removeReceivers()
-                nodePicker.removeReceivers()
-            }
-            if (BuildConfig.SUPPORTS_ANTI_UNINSTALL) {
-                antiUninstallBlocker.onDestroy()
-            }
-            mindfulMessage.onDestroy()
-            reelsCountTracker.onDestroy()
-            reelUsageTracker.onDestroy()
-            websiteUsageTracker.onDestroy()
-            appUsageTracker.onDestroy()
-
-            eventChannel.close()
-            websiteObservationChannel.close()
-            serviceScope.cancel()
-        }catch (_: Exception){}
+            cleanup()
+        } catch (error: Throwable) {
+            Log.e("AppBlockerService", "Failed to clean up $name", error)
+            crashLogger.logNonFatalError(Exception("Failed to clean up $name", error))
+        }
     }
 }

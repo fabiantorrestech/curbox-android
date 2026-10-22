@@ -1,7 +1,6 @@
 package neth.iecal.curbox.ui.fragments.installation.onboarding.screens
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -19,28 +18,35 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import androidx.activity.result.ActivityResultLauncher
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import neth.iecal.curbox.CrashLogger
 import neth.iecal.curbox.R
-import neth.iecal.curbox.databinding.FragmentOnboardingPermissionsBinding
 import neth.iecal.curbox.data.models.AppBlockerWarningScreenConfig
 import neth.iecal.curbox.data.models.AppGroup
 import neth.iecal.curbox.data.models.AppGroupConfig
 import neth.iecal.curbox.data.models.AppTimeConfig
 import neth.iecal.curbox.data.models.AppUsageConfig
+import neth.iecal.curbox.databinding.FragmentOnboardingPermissionsBinding
 import neth.iecal.curbox.services.AppBlockerService
 import neth.iecal.curbox.ui.activity.FragmentActivity
+import neth.iecal.curbox.ui.fragments.BackupViewModel
 import neth.iecal.curbox.ui.fragments.installation.onboarding.OnboardingViewModel
 import neth.iecal.curbox.ui.fragments.main.reducers.blockertools.appBlocker.AppBlockerSettingViewModel
 import neth.iecal.curbox.ui.fragments.main.usage.AllAppsUsageFragment
+import neth.iecal.curbox.utils.OnboardingState
 import neth.iecal.curbox.utils.PermissionUtils
-import neth.iecal.curbox.utils.ZipUtils
-import neth.iecal.curbox.utils.ZipUtils.unzipSharedPreferencesFromUri
-import java.util.UUID
 
 class OnboardingPermissionsFragment : Fragment() {
 
@@ -49,6 +55,8 @@ class OnboardingPermissionsFragment : Fragment() {
 
     private val onboardingViewModel: OnboardingViewModel by activityViewModels()
     private val appBlockerViewModel: AppBlockerSettingViewModel by activityViewModels()
+    private val backupViewModel: BackupViewModel by viewModels()
+    private var completingSetup = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
@@ -63,14 +71,11 @@ class OnboardingPermissionsFragment : Fragment() {
         }
     }
 
-    private val restorePicker: ActivityResultLauncher<Intent> =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            result.data?.data?.let { uri ->
-                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                activity?.contentResolver?.takePersistableUriPermission(uri, takeFlags)
-                unzipSharedPreferencesFromUri(requireContext(), uri)
-            }
+    private val restorePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && OnboardingState.canRestore(requireContext())) {
+            backupViewModel.restore(uri)
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,47 +97,29 @@ class OnboardingPermissionsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Completed users also reach this screen when a required permission is lost.
+        // Restore eligibility must not prevent them from granting it again.
+        setupRestore()
         binding.btnAction.setOnClickListener {
-            // Persist onboarding app block group
-            val targetApp = onboardingViewModel.targetAppPackage.value
-            val limit = onboardingViewModel.dailyLimitMinutes.value ?: 30L
-            
-            val packageMap = mapOf(
-                "Instagram" to "com.instagram.android",
-                "TikTok" to "com.zhiliaoapp.musically",
-                "YouTube" to "com.google.android.youtube",
-                "Reddit" to "com.reddit.frontpage"
-            )
-            
-            val pkg = packageMap[targetApp]
-            if (pkg != null) {
-                val usageConfig = AppUsageConfig(
-                    isDailyUniform = true,
-                    uniformLimit = limit,
-                    dailyLimits = LongArray(7) { limit }
-                )
-                val newGroup = AppGroup(
-                    id = UUID.randomUUID().toString(),
-                    name = getString(R.string.onboarding_app_limit_group_name, targetApp),
-                    selectedPackages = listOf(pkg),
-                    config = AppGroupConfig(
-                        schedule = AppTimeConfig.allDay(),
-                        usage = usageConfig
-                    ),
-                    isActive = true,
-                    warningScreenConfig = AppBlockerWarningScreenConfig()
-                )
-                appBlockerViewModel.addGroup(newGroup)
+            if (completingSetup || backupViewModel.status.value == BackupViewModel.Status.WORKING) {
+                return@setOnClickListener
             }
-
-            val sharedPreferences =
-                requireContext().getSharedPreferences("AppPreferences", Context.MODE_PRIVATE)
-            sharedPreferences.edit().putBoolean("isFirstLaunchComplete", true).apply()
-
-            val intent = Intent(requireContext(), FragmentActivity::class.java).apply {
-                putExtra("fragment", AllAppsUsageFragment.FRAGMENT_ID)
+            completingSetup = true
+            updatePermissionsState()
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    OnboardingState.complete(requireContext()) { createStarterGroup() }
+                    openMainScreen()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    CrashLogger(requireContext()).logNonFatalError(error)
+                    Toast.makeText(requireContext(), R.string.onboarding_finish_failed, Toast.LENGTH_LONG).show()
+                } finally {
+                    completingSetup = false
+                    if (_binding != null) updatePermissionsState()
+                }
             }
-            startActivity(intent)
         }
 
         binding.overlayPermRoot.setOnClickListener {
@@ -195,6 +182,66 @@ class OnboardingPermissionsFragment : Fragment() {
 
         setupDescText()
         updatePermissionsState()
+    }
+
+    private fun setupRestore() {
+        binding.btnRestoreBackup.setOnClickListener {
+            if (!OnboardingState.canRestore(requireContext()) || completingSetup) return@setOnClickListener
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.restore_backup)
+                .setMessage(R.string.backup_restore_confirmation)
+                .setPositiveButton(R.string.restore_backup) { _, _ -> restorePicker.launch(arrayOf("*/*")) }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                backupViewModel.status.collect { status ->
+                    binding.restoreProgress.visibility =
+                        if (status == BackupViewModel.Status.WORKING) View.VISIBLE else View.GONE
+                    updatePermissionsState()
+                    val message = when (status) {
+                        BackupViewModel.Status.SUCCEEDED -> R.string.backup_restored
+                        BackupViewModel.Status.FAILED -> R.string.backup_restore_failed
+                        else -> null
+                    }
+                    if (message != null) {
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                        backupViewModel.dismissResult()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun createStarterGroup() {
+        val targetApp = onboardingViewModel.targetAppPackage.value
+        val limit = onboardingViewModel.dailyLimitMinutes.value ?: 30L
+        val packageMap = mapOf(
+            "Instagram" to "com.instagram.android",
+            "TikTok" to "com.zhiliaoapp.musically",
+            "YouTube" to "com.google.android.youtube",
+            "Reddit" to "com.reddit.frontpage"
+        )
+        val pkg = packageMap[targetApp] ?: return
+        appBlockerViewModel.addGroupAndWait(AppGroup(
+            id = UUID.randomUUID().toString(),
+            name = getString(R.string.onboarding_app_limit_group_name, targetApp),
+            selectedPackages = listOf(pkg),
+            config = AppGroupConfig(
+                schedule = AppTimeConfig.allDay(),
+                usage = AppUsageConfig(isDailyUniform = true, uniformLimit = limit, dailyLimits = LongArray(7) { limit })
+            ),
+            isActive = true,
+            warningScreenConfig = AppBlockerWarningScreenConfig()
+        ))
+    }
+
+    private fun openMainScreen() {
+        startActivity(Intent(requireContext(), FragmentActivity::class.java).apply {
+            putExtra("fragment", AllAppsUsageFragment.FRAGMENT_ID)
+        })
+        activity?.finish()
     }
 
     private fun setupDescText() {
@@ -362,7 +409,9 @@ class OnboardingPermissionsFragment : Fragment() {
         binding.blockerAccPermRoot.alpha = if (canDoBlocker) (if (hasBlocker) 0.5f else 1.0f) else 0.3f
 
         val allGranted = hasOverlay && hasNotif && hasBlocker
-        binding.btnAction.isEnabled = allGranted
+        val busy = completingSetup || backupViewModel.status.value == BackupViewModel.Status.WORKING
+        binding.btnAction.isEnabled = allGranted && !busy
+        binding.btnRestoreBackup.isEnabled = !busy && OnboardingState.canRestore(requireContext())
         if (allGranted) {
             binding.btnAction.text = getString(R.string.onboarding_curb_me)
         } else {

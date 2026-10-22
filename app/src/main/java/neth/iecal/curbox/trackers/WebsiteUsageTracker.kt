@@ -6,6 +6,10 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,11 +50,14 @@ class WebsiteUsageTracker {
     private var domainStartTimeMs: Long = 0L
     private var onWebsiteObserved: (WebsiteObservation?) -> Unit = {}
 
+    private var settingsJob: Job? = null
     private var recheckJob: Job? = null
+    @Volatile private var destroyed = false
     @Volatile private var trackingEnabled = true
 
     private val heartbeat = object : Runnable {
         override fun run() {
+            if (destroyed) return
             saveSession()
             mainHandler.postDelayed(this, HEARTBEAT_MS)
         }
@@ -69,12 +76,14 @@ class WebsiteUsageTracker {
     }
 
     private fun startObservingRecheckTime() {
-        scope.launch {
+        settingsJob?.cancel()
+        settingsJob = scope.launch {
             service.dataStoreManager.settings.collect { settings ->
                 val enabled = settings.isWebsiteUsageTrackingEnabled
                 val wasEnabled = trackingEnabled
                 trackingEnabled = enabled
                 mainHandler.post {
+                    if (destroyed) return@post
                     when {
                         !enabled -> pauseUsageSession()
                         !wasEnabled -> resumeUsageSession()
@@ -89,6 +98,7 @@ class WebsiteUsageTracker {
     }
 
     private fun scheduleRecheck(recheckTime: Long) {
+        if (destroyed) return
         recheckJob?.cancel()
         recheckJob = scope.launch {
             val delayMs = recheckTime - System.currentTimeMillis()
@@ -96,6 +106,7 @@ class WebsiteUsageTracker {
                 kotlinx.coroutines.delay(delayMs)
                 Log.d("WebsiteUsageTracker", "Executing scheduled recheck")
                 mainHandler.post {
+                    if (destroyed) return@post
                     saveSession()
                     emitCurrentObservation()
                 }
@@ -134,12 +145,12 @@ class WebsiteUsageTracker {
         return null
     }
     fun onEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+        if (destroyed || event == null) return
         
         val packageName = event.packageName?.toString() ?: return
         
         if (!URL_BAR_ID_LIST.containsKey(packageName)) {
-            mainHandler.post { leaveCurrentWebsite() }
+            mainHandler.post { if (!destroyed) leaveCurrentWebsite() }
             return
         }
 
@@ -183,6 +194,7 @@ class WebsiteUsageTracker {
     private data class HourSlice(val date: String, val hour: Int, val durationMs: Long)
 
     private fun observeWebsite(packageName: String, siteInfo: SiteInfo) {
+        if (destroyed) return
         if (siteInfo.urlIdentifier == currentUrlIdentifier && packageName == currentPackage) return
 
         Log.d("saving session", siteInfo.urlIdentifier)
@@ -291,6 +303,8 @@ class WebsiteUsageTracker {
                         )
                     )
                     websiteStatsDao.touch(date, packageName, identifier, wallNow)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e("WebsiteUsageTracker", "Failed to save initial website trace", e)
                 }
@@ -343,6 +357,8 @@ class WebsiteUsageTracker {
                         wallNow
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("WebsiteUsageTracker", "Failed to save website trace", e)
             }
@@ -350,8 +366,20 @@ class WebsiteUsageTracker {
     }
 
     fun onDestroy() {
+        if (destroyed) return
+        destroyed = true
+        settingsJob?.cancel()
         recheckJob?.cancel()
-        saveSession()
-        onWebsiteObserved(null)
+        mainHandler.removeCallbacksAndMessages(null)
+        try {
+            leaveCurrentWebsite()
+            // Finish queued writes, including the final session, before cancelling the scope.
+            runBlocking(Dispatchers.IO) {
+                scope.coroutineContext[Job]?.children?.toList()?.joinAll()
+            }
+        } finally {
+            onWebsiteObserved = {}
+            scope.cancel()
+        }
     }
 }

@@ -38,24 +38,6 @@ class ScreentimeWidgetProvider : AppWidgetProvider() {
         private const val HEADER_HEIGHT_DP = 96
         private const val APP_ROW_HEIGHT_DP = 44
 
-        private val ASCII_ART_IDS = intArrayOf(
-            R.string.ascii_brain,
-            R.string.ascii_aim,
-            R.string.ascii_star1,
-            R.string.ascii_star2,
-            R.string.ascii_kitty,
-            R.string.ascii_star3,
-            R.string.ascii_star4,
-            R.string.ascii_star5,
-            R.string.ascii_coolstars,
-            R.string.ascii_coolflower,
-            R.string.ascii_chillguy,
-            R.string.ascii_god,
-            R.string.ascii_jellyfish,
-            R.string.ascii_lotus,
-            R.string.ascii_sharks,
-        )
-
         private val APP_ROW_IDS = intArrayOf(
             R.id.app_row_1,
             R.id.app_row_2,
@@ -189,7 +171,6 @@ class ScreentimeWidgetProvider : AppWidgetProvider() {
 
         try {
             val views = RemoteViews(context.packageName, R.layout.widget_app_stats_v2).apply {
-                setTextViewText(R.id.widget_ascii_art, context.getString(ASCII_ART_IDS.random()))
                 setTextViewText(R.id.screentime_widget, formatTime(totalScreentime))
 
                 val visibleAppCount = getVisibleAppCount(appWidgetManager, widgetId, list.size)

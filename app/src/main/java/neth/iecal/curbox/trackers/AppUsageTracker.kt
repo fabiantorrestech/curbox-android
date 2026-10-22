@@ -9,6 +9,9 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +40,9 @@ class AppUsageTracker {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private var settingsJob: Job? = null
+    @Volatile private var destroyed = false
+
     private var ownPackage = ""
     private var currentPackage: String? = null
     private var sessionStartElapsed = 0L
@@ -52,17 +58,24 @@ class AppUsageTracker {
         val powerManager = service.getSystemService(Context.POWER_SERVICE) as PowerManager
         screenOn = powerManager.isInteractive
         registerScreenReceiver()
-        scope.launch {
+        settingsJob = scope.launch {
             service.dataStoreManager.settings.collect { settings ->
                 val enabled = settings.isAppUsageTrackingEnabled
-                trackingEnabled = enabled
-                if (!enabled) mainHandler.post { discardCurrentSession() }
+                mainHandler.post {
+                    if (destroyed) return@post
+                    val wasEnabled = trackingEnabled
+                    trackingEnabled = enabled
+                    when {
+                        !enabled -> discardCurrentSession()
+                        !wasEnabled -> resumeForegroundApp()
+                    }
+                }
             }
         }
     }
 
     fun onEvent(event: AccessibilityEvent?) {
-        if (!trackingEnabled) return
+        if (destroyed || !trackingEnabled) return
         if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         if (!screenOn) return
 
@@ -73,7 +86,11 @@ class AppUsageTracker {
         }
         val foreground = activePackage ?: event.packageName?.toString() ?: return
 
-        if (foreground.isEmpty() || foreground == ownPackage || foreground in IGNORED_PACKAGES) return
+        if (foreground == ownPackage) {
+            endCurrentSession()
+            return
+        }
+        if (foreground.isEmpty() || foreground in IGNORED_PACKAGES) return
         if (foreground == currentPackage) return
 
         switchTo(foreground)
@@ -215,7 +232,7 @@ class AppUsageTracker {
     }
 
     private fun resumeForegroundApp() {
-        if (!trackingEnabled || !screenOn || currentPackage != null) return
+        if (destroyed || !trackingEnabled || !screenOn || currentPackage != null) return
         val active = try {
             service.rootInActiveWindow?.packageName?.toString()
         } catch (_: Exception) {
@@ -235,23 +252,27 @@ class AppUsageTracker {
     }
 
     fun onDestroy() {
-        stopHeartbeat()
+        if (destroyed) return
+        destroyed = true
+        settingsJob?.cancel()
+        mainHandler.removeCallbacksAndMessages(null)
         val packageName = currentPackage.takeIf { trackingEnabled }
-        if (packageName != null) {
-            val startWall = sessionStartWall + (lastCommitElapsed - sessionStartElapsed)
-            val endWall = sessionStartWall + (SystemClock.elapsedRealtime() - sessionStartElapsed)
-            val segments = splitIntoHourlySegments(startWall, endWall)
-            try {
-                runBlocking {
-                    segments.forEach { addUsage(it.date, packageName, it.hour, it.durationMs, it.endWall) }
-                }
-            } catch (_: Exception) {
-            }
-        }
+        val startWall = sessionStartWall + (lastCommitElapsed - sessionStartElapsed)
+        val endWall = sessionStartWall + (SystemClock.elapsedRealtime() - sessionStartElapsed)
         currentPackage = null
         try {
+            runBlocking(Dispatchers.IO) {
+                // Let queued increments finish before reading the rows for the final flush.
+                scope.coroutineContext[Job]?.children?.toList()?.joinAll()
+                if (packageName != null) {
+                    splitIntoHourlySegments(startWall, endWall).forEach {
+                        addUsage(it.date, packageName, it.hour, it.durationMs, it.endWall)
+                    }
+                }
+            }
+        } finally {
+            scope.cancel()
             service.unregisterReceiver(screenReceiver)
-        } catch (_: Exception) {
         }
     }
 

@@ -1,7 +1,15 @@
 package neth.iecal.curbox.data.models
 
+import com.google.gson.TypeAdapter
+import com.google.gson.annotations.JsonAdapter
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.google.gson.stream.JsonWriter
+import java.io.IOException
+
 //You can setup a custom message to appear here!
 data class AppBlockerWarningScreenConfig(
+    @field:JsonAdapter(WarningMessagesAdapter::class)
     val message: List<String> = listOf("Message 1", "Message 2"),
     val timeInterval: Long = 120000L, // default cooldown period
     val isDynamicIntervalSettingAllowed: Boolean = false,
@@ -29,3 +37,29 @@ data class AppBlockerWarningScreenConfig(
     /** For app groups, grant access only for the current selected-app session. */
     val isOnOpenConfig: Boolean = false,
 )
+
+class WarningMessagesAdapter : TypeAdapter<List<String>>() {
+    override fun read(reader: JsonReader): List<String> {
+        // V4 stored one message. Keep it when loading settings, sync, or pending changes.
+        if (reader.peek() == JsonToken.STRING) return listOf(reader.nextString())
+        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+            throw IOException("Expected warning message string or array at ${reader.path}")
+        }
+        val messages = mutableListOf<String>()
+        reader.beginArray()
+        while (reader.hasNext()) {
+            if (reader.peek() != JsonToken.STRING) {
+                throw IOException("Expected warning message string at ${reader.path}")
+            }
+            messages.add(reader.nextString())
+        }
+        reader.endArray()
+        return messages
+    }
+
+    override fun write(writer: JsonWriter, messages: List<String>) {
+        writer.beginArray()
+        messages.forEach { writer.value(it) }
+        writer.endArray()
+    }
+}

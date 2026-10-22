@@ -1,7 +1,5 @@
 package neth.iecal.curbox.ui.fragments.main
 
-import neth.iecal.curbox.R
-
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
@@ -10,21 +8,28 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import kotlinx.coroutines.launch
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import neth.iecal.curbox.BuildConfig
+import neth.iecal.curbox.R
 import neth.iecal.curbox.data.sync.SyncGateway
 import neth.iecal.curbox.databinding.FragmentInfoBinding
 import neth.iecal.curbox.ui.activity.FragmentActivity
+import neth.iecal.curbox.ui.fragments.BackupViewModel
 import neth.iecal.curbox.ui.fragments.main.reducers.sync.SyncFragment
-import neth.iecal.curbox.utils.LanguageUtils
+import neth.iecal.curbox.utils.CrashLogPreview
 import neth.iecal.curbox.utils.DataStoreManager
+import neth.iecal.curbox.utils.LanguageUtils
 
 class InfoFragment : Fragment() {
 
@@ -32,6 +37,13 @@ class InfoFragment : Fragment() {
     private val binding get() = _binding!!
     private val dataStore by lazy { DataStoreManager(requireContext()) }
     private var renderingTrackingSettings = false
+
+    private val backupViewModel: BackupViewModel by viewModels()
+    private val backupPicker = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) backupViewModel.export(uri)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -44,10 +56,36 @@ class InfoFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.textAppVersion.text = getString(R.string.app_version, BuildConfig.VERSION_NAME)
         setupAccountSection()
         setupUsageTrackingSettings()
         setupClickListeners()
+        setupBackup()
         LanguageUtils.bindLanguageSelector(binding.languageSelector, binding.textCurrentLanguage)
+    }
+
+    private fun setupBackup() {
+        binding.btnBackup.setOnClickListener {
+            backupPicker.launch("curbox_settings_${java.time.LocalDate.now()}.json")
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                backupViewModel.status.collect { status ->
+                    binding.btnBackup.isEnabled = status != BackupViewModel.Status.WORKING
+                    binding.backupProgress.visibility =
+                        if (status == BackupViewModel.Status.WORKING) View.VISIBLE else View.GONE
+                    val message = when (status) {
+                        BackupViewModel.Status.SUCCEEDED -> R.string.backup_saved
+                        BackupViewModel.Status.FAILED -> R.string.backup_save_failed
+                        else -> null
+                    }
+                    if (message != null) {
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                        backupViewModel.dismissResult()
+                    }
+                }
+            }
+        }
     }
 
     private fun setupUsageTrackingSettings() {
@@ -177,36 +215,29 @@ class InfoFragment : Fragment() {
 
     private fun showCrashLogs() {
         val logFile = File(requireContext().filesDir, "crash_log.txt")
-        val content = if (logFile.exists()) {
-            try {
-                val text = logFile.readText()
-                if (text.isBlank()) "No crash logs available." else text
-            } catch (e: Exception) {
-                "Error reading crash logs."
+        viewLifecycleOwner.lifecycleScope.launch {
+            val preview = withContext(Dispatchers.IO) {
+                runCatching { if (logFile.exists()) CrashLogPreview.read(logFile) else null }
             }
-        } else {
-            "No crash logs available."
-        }
-        
-        val displayContent = if (content.length > 50000) {
-            "...${content.takeLast(50000)}"
-        } else {
-            content
-        }
+            val content = preview.fold(
+                onSuccess = { it ?: getString(R.string.crash_logs_none_available) },
+                onFailure = { getString(R.string.crash_logs_read_error) }
+            )
 
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.crash_logs_title)
-            .setMessage(displayContent)
-            .setPositiveButton(R.string.share) { _, _ ->
-                shareCrashLogs(logFile)
-            }
-            .setNegativeButton(R.string.close, null)
-            .setNeutralButton(R.string.clear) { _, _ ->
-                if (logFile.exists() && logFile.delete()) {
-                    Toast.makeText(requireContext(), getString(R.string.crash_logs_cleared), Toast.LENGTH_SHORT).show()
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.crash_logs_title)
+                .setMessage(content)
+                .setPositiveButton(R.string.share) { _, _ ->
+                    shareCrashLogs(logFile)
                 }
-            }
-            .show()
+                .setNegativeButton(R.string.close, null)
+                .setNeutralButton(R.string.clear) { _, _ ->
+                    if (logFile.exists() && logFile.delete()) {
+                        Toast.makeText(requireContext(), getString(R.string.crash_logs_cleared), Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .show()
+        }
     }
 
     private fun shareCrashLogs(logFile: File) {
