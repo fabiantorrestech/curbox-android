@@ -34,6 +34,7 @@ class GrayScaleFilter : BaseBlocker() {
 
     private lateinit var service: BaseBlockingService
     private val grayscaleControl = GrayscaleControl()
+    private val grayscaleOwner = GrayscaleOwner(grayscaleControl)
     private var ignoredGrayScalePackages: List<String> = listOf()
     private var lastPackageName: String? = null
     private var settingsJob: Job? = null
@@ -69,7 +70,7 @@ class GrayScaleFilter : BaseBlocker() {
         lastPackageName = currentPackageName
 
         if (currentPackageName == service.packageName) {
-            grayscaleControl.disableGrayscale(service)
+            grayscaleOwner.request(false)
             return
         }
 
@@ -108,10 +109,10 @@ class GrayScaleFilter : BaseBlocker() {
 
         if (shouldGrayscale) {
             Log.d("GrayScaleFilter", "Enabling monochrome for $currentPackageName")
-            grayscaleControl.enableGrayscale(service)
+            grayscaleOwner.request(true)
         } else {
             Log.d("GrayScaleFilter", "Disabling monochrome for $currentPackageName")
-            grayscaleControl.disableGrayscale(service)
+            grayscaleOwner.request(false)
         }
     }
 
@@ -127,6 +128,7 @@ class GrayScaleFilter : BaseBlocker() {
 
     fun setup(service: BaseBlockingService) {
         this.service = service
+        grayscaleOwner.attach(service)
         destroyed = false
         handler.removeCallbacks(scheduleChecker)
         handler.postDelayed(scheduleChecker, 60_000L - System.currentTimeMillis() % 60_000L)
@@ -178,6 +180,7 @@ class GrayScaleFilter : BaseBlocker() {
         }
         settingsJob?.cancel()
         handler.removeCallbacksAndMessages(null)
+        grayscaleOwner.detach()
     }
 
     private val refreshReceiver = object : BroadcastReceiver() {
