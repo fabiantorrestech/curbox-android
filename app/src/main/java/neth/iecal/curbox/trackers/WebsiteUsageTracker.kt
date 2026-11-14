@@ -34,6 +34,13 @@ class WebsiteUsageTracker {
         // browser (e.g. Firefox/GeckoView) does not fire a url change or leave
         // event that would otherwise trigger a commit.
         private const val HEARTBEAT_MS = 15_000L
+
+        // A browser opened from another app fires its events before its address bar
+        // exists, then goes quiet. Reading the bar again once the page settles makes
+        // sure that first page is still checked.
+        private const val URL_RESCAN_FIRST_DELAY_MS = 800L
+        private const val URL_RESCAN_SECOND_DELAY_MS = 1_700L
+        private const val URL_RESCAN_MAX_NODES = 500
     }
 
     private lateinit var service: BaseBlockingService
@@ -52,6 +59,7 @@ class WebsiteUsageTracker {
 
     private var settingsJob: Job? = null
     private var recheckJob: Job? = null
+    private var urlRescanJob: Job? = null
     @Volatile private var destroyed = false
     @Volatile private var trackingEnabled = true
 
@@ -162,6 +170,8 @@ class WebsiteUsageTracker {
             return
         }
 
+        scheduleUrlRescan(packageName)
+
         val rootNode = service.rootInActiveWindow ?: return
         val urlBarInfo = URL_BAR_ID_LIST[packageName] ?: return
 
@@ -188,6 +198,59 @@ class WebsiteUsageTracker {
         } catch (e: Exception) {
             Log.e("WebsiteUsageTracker", "Failed to find node", e)
         }
+    }
+
+    // Each new browser event restarts the wait, so the bar is read after the burst ends.
+    private fun scheduleUrlRescan(packageName: String) {
+        if (destroyed) return
+        urlRescanJob?.cancel()
+        urlRescanJob = scope.launch {
+            kotlinx.coroutines.delay(URL_RESCAN_FIRST_DELAY_MS)
+            rescanUrlBar(packageName)
+            kotlinx.coroutines.delay(URL_RESCAN_SECOND_DELAY_MS)
+            rescanUrlBar(packageName)
+        }
+    }
+
+    private fun rescanUrlBar(packageName: String) {
+        if (destroyed) return
+        try {
+            val rootNode = service.rootInActiveWindow ?: return
+            // Only read the bar while that browser is still on screen.
+            if (rootNode.packageName?.toString() != packageName) return
+            val urlBarInfo = URL_BAR_ID_LIST[packageName] ?: return
+            val node = AccessibilityHelper.findElementById(rootNode, urlBarInfo.displayUrlBarId)
+                ?: findNodeByIdInTree(rootNode, urlBarInfo.displayUrlBarId)
+                ?: return
+            val text = (node.text ?: node.contentDescription)?.toString().orEmpty()
+            if (text.isEmpty()) return
+
+            val siteInfo = extractSiteInfo(filterOutUrlFromPlainText(text) ?: text)
+            if (siteInfo.domain.isNotEmpty()) {
+                mainHandler.post { observeWebsite(packageName, siteInfo) }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("WebsiteUsageTracker", "Failed to rescan url bar", e)
+        }
+    }
+
+    // Firefox draws its address bar with Compose, whose tags the system id lookup cannot
+    // find, so walk the tree from the top. The bar sits near the top, so a small cap is enough.
+    private fun findNodeByIdInTree(root: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < URL_RESCAN_MAX_NODES) {
+            val node = queue.removeFirst()
+            visited++
+            if (node.viewIdResourceName == id) return node
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return null
     }
 
     private data class SiteInfo(val domain: String, val urlIdentifier: String)
@@ -370,6 +433,7 @@ class WebsiteUsageTracker {
         destroyed = true
         settingsJob?.cancel()
         recheckJob?.cancel()
+        urlRescanJob?.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         try {
             leaveCurrentWebsite()
