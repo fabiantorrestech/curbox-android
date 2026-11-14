@@ -22,7 +22,10 @@ import neth.iecal.curbox.R
 import neth.iecal.curbox.data.models.AppBlockerWarningScreenConfig
 import neth.iecal.curbox.data.models.AppGroupConfig
 import neth.iecal.curbox.data.models.AppUsageConfig
+import neth.iecal.curbox.data.models.UnlockGapConfig
+import neth.iecal.curbox.data.models.UnlockGapSchedule
 import neth.iecal.curbox.data.models.upgradeLegacyAppGroupConfigs
+import neth.iecal.curbox.hardcoded.TRANSIENT_SYSTEM_PACKAGES
 import neth.iecal.curbox.services.BaseBlockingService
 import neth.iecal.curbox.ui.activity.WarningActivity
 import neth.iecal.curbox.utils.AppSuspendHelper
@@ -55,6 +58,13 @@ class AppBlocker : BaseBlocker() {
         const val INTENT_ACTION_WARNING_SCREEN_VISIBILITY =
             "neth.iecal.curbox.appblocker.warning_screen_visibility"
         const val EXTRA_WARNING_SCREEN_VISIBLE = "warning_screen_visible"
+
+        /** Cooldown intent extra: the unlock came from the emergency password. */
+        const val EXTRA_EMERGENCY = "emergency"
+        /** Warning screen extras for the growing wait between unlocks. */
+        const val EXTRA_UNLOCK_GAP_ENDS_AT = "unlock_gap_ends_at"
+        const val EXTRA_NEXT_UNLOCK_GAP_MN = "next_unlock_gap_mn"
+        const val EXTRA_EMERGENCY_UNLOCKS_LEFT = "emergency_unlocks_left"
         private const val TARGET_EVENTS_MASK = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
     }
 
@@ -76,6 +86,9 @@ class AppBlocker : BaseBlocker() {
     private val blockedAppsList = ConcurrentHashMap<String, MutableList<AppGroupEntry>>()
     // Holds the warning config last shown per group, used for the cooldown intent's default duration.
     private val appBlockerWarningScrnConfgs = ConcurrentHashMap<String, AppBlockerWarningScreenConfig>()
+
+    @Volatile
+    private var unlockGapConfig = UnlockGapConfig()
 
     private lateinit var usageStats : UsageStatsHelper
     private var lastPackage = ""
@@ -110,6 +123,12 @@ class AppBlocker : BaseBlocker() {
             return
         }
         if (!service.isActivePackage(packageName)) return
+
+        // A share sheet or permission dialog opened from an app is not leaving it,
+        // so it must not end that app's on each open unlock. Groups that list one still apply.
+        if (packageName in TRANSIENT_SYSTEM_PACKAGES && !blockedAppsList.containsKey(packageName)) {
+            return
+        }
 
         clearFinishedOnEachOpenSessions(packageName)
 
@@ -206,7 +225,10 @@ class AppBlocker : BaseBlocker() {
             .map(AppGroupEntry::groupId)
             .distinct()
             .filter(cooldownGroupsList::containsKey)
-            .forEach(::removeCooldownFrom)
+            .forEach { groupId ->
+                recordOnEachOpenUnlockEnd(groupId, System.currentTimeMillis())
+                removeCooldownFrom(groupId)
+            }
     }
 
     // All senders are in this app, including its other processes (the same UID).
@@ -248,6 +270,7 @@ class AppBlocker : BaseBlocker() {
         settingsJob = CoroutineScope(Dispatchers.IO).launch {
             service.dataStoreManager.settings.collectLatest { settings ->
                 Log.d("AppBlocker", "Settings updated, groups count: ${settings.blockedAppGroups.size}")
+                unlockGapConfig = settings.unlockGapConfig
 
                 val newBlockedAppsList = ConcurrentHashMap<String, MutableList<AppGroupEntry>>()
                 settings.blockedAppGroups.upgradeLegacyAppGroupConfigs().forEach { group ->
@@ -313,9 +336,82 @@ class AppBlocker : BaseBlocker() {
             currentTimeMillis + durationMillis
         }
 
+        if (intent.getBooleanExtra(EXTRA_EMERGENCY, false)) {
+            if (emergencyUnlocksLeft(currentTimeMillis) <= 0) return
+            recordEmergencyUnlock(currentTimeMillis)
+        } else if (warningConfigFor(groupId)?.isUnlockGapEnabled == true) {
+            recordUnlock(groupId, currentTimeMillis, realTimeEndMillis)
+        }
+
         putCooldownTo(groupId, realTimeEndMillis)
         showNextCooldownNotification()
         setUpForcedRefreshChecker("cooldown:$groupId", realTimeEndMillis, groupId)
+    }
+
+    /**
+     * The group's current warning settings. The service can be recreated while the warning
+     * screen is open, so the last shown config is only a fallback.
+     */
+    private fun warningConfigFor(groupId: String): AppBlockerWarningScreenConfig? =
+        blockedAppsList.values.asSequence()
+            .flatten()
+            .firstOrNull { it.groupId == groupId }
+            ?.warningConfig
+            ?: appBlockerWarningScrnConfgs[groupId]
+
+    /** Unlocks of this group since the last day end. Emergency unlocks are not counted. */
+    private fun unlockStreak(groupId: String, now: Long): Int {
+        val lastUnlockAt = prefs.getLong("gap_last_unlock_$groupId", 0L)
+        if (lastUnlockAt < UnlockGapSchedule.lastDayEndAtOrBefore(now, unlockGapConfig)) return 0
+        return prefs.getInt("gap_streak_$groupId", 0)
+    }
+
+    private fun recordUnlock(groupId: String, now: Long, unlockEndsAt: Long) {
+        val streak = unlockStreak(groupId, now) + 1
+        prefs.edit {
+            putInt("gap_streak_$groupId", streak)
+            putLong("gap_last_unlock_$groupId", now)
+            putLong("gap_unlock_end_$groupId", unlockEndsAt)
+        }
+    }
+
+    /** An on each open unlock is stored as ending in a day; it really ends when the user leaves. */
+    private fun recordOnEachOpenUnlockEnd(groupId: String, now: Long) {
+        if (prefs.getLong("gap_unlock_end_$groupId", 0L) > now) {
+            prefs.edit { putLong("gap_unlock_end_$groupId", now) }
+        }
+    }
+
+    /** When the next unlock of this group is allowed, or 0 when there is no wait. */
+    private fun unlockGapEndsAt(groupId: String, config: AppBlockerWarningScreenConfig, now: Long): Long {
+        if (!config.isUnlockGapEnabled) return 0L
+        val streak = unlockStreak(groupId, now)
+        if (streak == 0) return 0L
+        val unlockEnd = prefs.getLong("gap_unlock_end_$groupId", 0L)
+        val gapMillis = UnlockGapSchedule.gapMinutes(config, streak) * 60_000L
+        val gapEnd = if (unlockEnd > Long.MAX_VALUE - gapMillis) Long.MAX_VALUE else unlockEnd + gapMillis
+        // The streak starts over at the day end, so the wait must not run past it
+        return minOf(gapEnd, UnlockGapSchedule.nextDayEndAfter(now, unlockGapConfig))
+    }
+
+    private fun emergencyUnlockTimesSince(dayStart: Long): List<Long> =
+        prefs.getString("emergency_unlock_times", "").orEmpty()
+            .split(",")
+            .mapNotNull { it.toLongOrNull() }
+            .filter { it >= dayStart }
+
+    private fun emergencyUnlocksLeft(now: Long): Int {
+        val config = unlockGapConfig
+        if (config.emergencyPasswordHash.isEmpty()) return 0
+        val dayStart = UnlockGapSchedule.lastDayEndAtOrBefore(now, config)
+        val used = emergencyUnlockTimesSince(dayStart).size
+        return (config.emergencyUnlocksPerDay - used).coerceAtLeast(0)
+    }
+
+    private fun recordEmergencyUnlock(now: Long) {
+        val dayStart = UnlockGapSchedule.lastDayEndAtOrBefore(now, unlockGapConfig)
+        val times = emergencyUnlockTimesSince(dayStart) + now
+        prefs.edit { putString("emergency_unlock_times", times.joinToString(",")) }
     }
 
     private fun getUsageLimitForToday(config: AppUsageConfig): Long {
@@ -445,6 +541,15 @@ class AppBlocker : BaseBlocker() {
             if (warningConfig.isWarningDialogHidden) return
             isWarningScreenVisible = true
 
+            val now = System.currentTimeMillis()
+            val unlockGapEndsAt = unlockGapEndsAt(groupId, warningConfig, now)
+            val nextUnlockGapMinutes = if (warningConfig.isUnlockGapEnabled) {
+                UnlockGapSchedule.gapMinutes(warningConfig, unlockStreak(groupId, now) + 1)
+            } else {
+                0L
+            }
+            val emergencyUnlocksLeft = emergencyUnlocksLeft(now)
+
             handler.postDelayed({
                 val dialogIntent = Intent(service, WarningActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -455,6 +560,9 @@ class AppBlocker : BaseBlocker() {
                         "warning_config",
                         Gson().toJson(warningConfig)
                     )
+                    putExtra(EXTRA_UNLOCK_GAP_ENDS_AT, unlockGapEndsAt)
+                    putExtra(EXTRA_NEXT_UNLOCK_GAP_MN, nextUnlockGapMinutes)
+                    putExtra(EXTRA_EMERGENCY_UNLOCKS_LEFT, emergencyUnlocksLeft)
                 }
                 service.startActivity(dialogIntent)
             }, 100)

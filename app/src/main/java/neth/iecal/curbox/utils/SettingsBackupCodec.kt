@@ -10,6 +10,7 @@ import neth.iecal.curbox.data.models.PomodoroState
 import neth.iecal.curbox.data.models.Settings
 import neth.iecal.curbox.data.models.SettingsChangeDelayConfig
 import neth.iecal.curbox.data.models.UiHiderConfig
+import neth.iecal.curbox.data.models.UnlockGapConfig
 import neth.iecal.curbox.data.models.upgradeLegacyAppGroupConfigs
 import neth.iecal.curbox.data.models.upgradeLegacyKeywordGroupConfigs
 import neth.iecal.curbox.data.models.upgradeLegacyConfig
@@ -140,6 +141,7 @@ object SettingsBackupCodec {
             require(config.allowedProceeds >= 0 && config.proceedsTimeWindowMn in 1..Long.MAX_VALUE / 60_000L)
             require(config.qrKeys.values.all { it == -1L || it > 0L })
             require(config.nfcKeys.values.all { it == -1L || it > 0L })
+            require(config.unlockGapStartMn >= 0 && config.unlockGapStepMn >= 0 && config.unlockGapMaxMn >= 0)
         }
         settings.blockedAppGroups.forEach {
             requireNotNull(it.blockingType)
@@ -166,6 +168,10 @@ object SettingsBackupCodec {
         settings.grayscaleGroups.forEach { schedule(it.timeConfig) }
         requireNotNull(settings.antiUninstallConfig2.mode)
         require(settings.settingsChangeDelayConfig2.delayMinutes in 0..SettingsChangeDelayConfig.MAX_DELAY_MINUTES)
+        settings.unlockGapConfig.let {
+            require(it.dayEndMinutes.size == 7 && it.dayEndMinutes.all { minutes -> minutes in 0..UnlockGapConfig.MAX_DAY_END_MINUTES })
+            require(it.emergencyUnlocksPerDay in 0..UnlockGapConfig.MAX_EMERGENCY_UNLOCKS_PER_DAY)
+        }
         require(settings.mindfulMessageConfig.textSize.isFinite() && settings.mindfulMessageConfig.textSize > 0f)
         require(settings.reelCounterOverlayConfig.textSize.isFinite() && settings.reelCounterOverlayConfig.textSize > 0f)
         require(settings.mindfulMessageConfig.positionX.isFinite() && settings.mindfulMessageConfig.positionY.isFinite())

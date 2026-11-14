@@ -11,6 +11,7 @@ import androidx.datastore.core.MultiProcessDataStoreFactory
 import androidx.datastore.core.Serializer
 import com.google.gson.Gson
 import com.google.gson.JsonParseException
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import neth.iecal.curbox.R
 import neth.iecal.curbox.data.models.AppGroup
+import neth.iecal.curbox.data.models.EmergencyUnlockPrefs
 import neth.iecal.curbox.data.models.GatedSettingsField
 import neth.iecal.curbox.data.models.KeywordBlocker
 import neth.iecal.curbox.data.models.ManualFocusGroup
@@ -27,6 +29,8 @@ import neth.iecal.curbox.data.models.PomodoroState
 import neth.iecal.curbox.data.models.Settings
 import neth.iecal.curbox.data.models.SettingsChangeDelayConfig
 import neth.iecal.curbox.data.models.SettingsChangeDelayPrefs
+import neth.iecal.curbox.data.models.UnlockGapConfig
+import neth.iecal.curbox.data.models.UnlockGapDayEnds
 import neth.iecal.curbox.data.models.upgradeLegacyAppGroupConfigs
 import neth.iecal.curbox.data.models.upgradeLegacyKeywordGroupConfigs
 import neth.iecal.curbox.data.models.upgradeLegacyConfig
@@ -122,6 +126,56 @@ private class ScheduledUsageConfigMigration(
     }.getOrNull()
 }
 
+/**
+ * Builds before [GatedSettingsField.EMERGENCY_UNLOCK] stored the whole [UnlockGapConfig] in a
+ * pending UNLOCK_GAP change. UNLOCK_GAP now applies only the day ends, so a waiting password
+ * or count change is moved to its own pending EMERGENCY_UNLOCK change with the same deadline.
+ */
+private class UnlockGapPendingSplitMigration(
+    private val gson: Gson
+) : DataMigration<Settings> {
+    override suspend fun shouldMigrate(currentData: Settings): Boolean =
+        currentData.settingsChangeDelayConfig2.pendingChanges.any(::holdsWholeConfig)
+
+    override suspend fun migrate(currentData: Settings): Settings {
+        val pending = currentData.settingsChangeDelayConfig2.pendingChanges
+        val current = currentData.unlockGapConfig
+        val hasEmergencyPending = pending.any { it.field == GatedSettingsField.EMERGENCY_UNLOCK.name }
+        val upgraded = pending.flatMap { change ->
+            if (!holdsWholeConfig(change)) return@flatMap listOf(change)
+            runCatching {
+                val requested = gson.fromJson(change.newValueJson, UnlockGapConfig::class.java)
+                val split = mutableListOf<PendingSettingsChange>()
+                if (requested.dayEndMinutes != current.dayEndMinutes) {
+                    split.add(change.copy(
+                        newValueJson = gson.toJson(UnlockGapDayEnds(requested.dayEndMinutes))
+                    ))
+                }
+                val emergency = requested.emergencyUnlockPrefs()
+                if (!hasEmergencyPending && emergency != current.emergencyUnlockPrefs()) {
+                    split.add(change.copy(
+                        field = GatedSettingsField.EMERGENCY_UNLOCK.name,
+                        newValueJson = gson.toJson(emergency)
+                    ))
+                }
+                split.toList()
+            }.getOrDefault(emptyList())
+        }
+        return currentData.copy(
+            settingsChangeDelayConfig2 = currentData.settingsChangeDelayConfig2.copy(
+                pendingChanges = upgraded
+            )
+        )
+    }
+
+    override suspend fun cleanUp() = Unit
+
+    private fun holdsWholeConfig(change: PendingSettingsChange): Boolean =
+        change.field == GatedSettingsField.UNLOCK_GAP.name && runCatching {
+            JsonParser.parseString(change.newValueJson).asJsonObject.has("emergencyPasswordHash")
+        }.getOrDefault(false)
+}
+
 class DataStoreManager(private val context: Context) {
     private val gson = Gson()
 
@@ -142,7 +196,10 @@ class DataStoreManager(private val context: Context) {
                         type = Settings::class.java,
                         defaultValue = Settings()
                     ),
-                    migrations = listOf(ScheduledUsageConfigMigration(gson)),
+                    migrations = listOf(
+                        ScheduledUsageConfigMigration(gson),
+                        UnlockGapPendingSplitMigration(gson)
+                    ),
                     produceFile = { File(context.applicationContext.filesDir, "datastore/settings.json") }
                 ).also { INSTANCE = it }
             }
@@ -309,6 +366,7 @@ class DataStoreManager(private val context: Context) {
                 nextWebsiteRecheckTime = current.nextWebsiteRecheckTime,
                 externalUnlockConditions = current.externalUnlockConditions,
                 settingsChangeDelayConfig2 = delayConfig,
+                unlockGapConfig = current.unlockGapConfig,
             )
 
             for (field in GatedSettingsField.values()) {
@@ -477,6 +535,18 @@ class DataStoreManager(private val context: Context) {
 
     suspend fun updateUrgeSurfConfig(config: neth.iecal.curbox.data.models.UrgeSurfConfig) {
         settingsDataStore.updateData { it.copy(urgeSurfConfig = config) }
+    }
+
+    suspend fun updateUnlockGapDayEnds(transform: (List<Int>) -> List<Int>) {
+        updateGated(GatedSettingsField.UNLOCK_GAP) {
+            UnlockGapDayEnds(transform(it.unlockGapConfig.dayEndMinutes))
+        }
+    }
+
+    suspend fun updateEmergencyUnlock(transform: (EmergencyUnlockPrefs) -> EmergencyUnlockPrefs) {
+        updateGated(GatedSettingsField.EMERGENCY_UNLOCK) {
+            transform(it.unlockGapConfig.emergencyUnlockPrefs())
+        }
     }
 
     suspend fun updateUiHiderConfig(transform: (neth.iecal.curbox.data.models.UiHiderConfig) -> neth.iecal.curbox.data.models.UiHiderConfig) {
@@ -807,6 +877,21 @@ class DataStoreManager(private val context: Context) {
                         requireTamperProtectionOff = prefs.requireTamperProtectionOff
                     ))
                 }
+                // Each applies only its own part, so the two never overwrite each other. Older
+                // pending UNLOCK_GAP values hold a whole UnlockGapConfig; the extra keys are ignored.
+                GatedSettingsField.UNLOCK_GAP -> {
+                    val dayEnds = gson.fromJson(valueJson, UnlockGapDayEnds::class.java)
+                    settings.copy(unlockGapConfig = settings.unlockGapConfig.copy(
+                        dayEndMinutes = dayEnds.dayEndMinutes
+                    ))
+                }
+                GatedSettingsField.EMERGENCY_UNLOCK -> {
+                    val emergency = gson.fromJson(valueJson, EmergencyUnlockPrefs::class.java)
+                    settings.copy(unlockGapConfig = settings.unlockGapConfig.copy(
+                        emergencyPasswordHash = emergency.emergencyPasswordHash,
+                        emergencyUnlocksPerDay = emergency.emergencyUnlocksPerDay
+                    ))
+                }
             }
         }.getOrNull()
     }
@@ -835,6 +920,8 @@ class DataStoreManager(private val context: Context) {
                     requireTamperProtectionOff =
                         settings.settingsChangeDelayConfig2.requireTamperProtectionOff,
                 )
+                GatedSettingsField.UNLOCK_GAP -> UnlockGapDayEnds(settings.unlockGapConfig.dayEndMinutes)
+                GatedSettingsField.EMERGENCY_UNLOCK -> settings.unlockGapConfig.emergencyUnlockPrefs()
             }
             gson.toJson(value)
         }.getOrNull()

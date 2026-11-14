@@ -27,6 +27,16 @@
         tools:text="You've 1 of 2 opens left"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/unlock_gap_next"
+        style="@style/TextAppearance.Material3.BodyMedium"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        tools:text="After this unlock, the next one waits 3 minutes."
+        android:visibility="gone" />
+
     <neth.iecal.curbox.ui.views.HorizontalNumberPicker
         android:id="@+id/mins_picker"
         android:layout_width="wrap_content"
@@ -162,6 +172,16 @@
         android:layout_marginBottom="16dp"
         android:text="@string/cancel"
         android:textAllCaps="true" />
+
+    <Button
+        android:id="@+id/btn_emergency"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        tools:text="Emergency unlock (1 left)" />
 
     <TextView
         android:id="@+id/urge_surf_offer"

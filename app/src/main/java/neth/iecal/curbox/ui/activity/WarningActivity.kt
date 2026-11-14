@@ -22,6 +22,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.transition.TransitionManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.google.gson.Gson
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -40,6 +42,7 @@ import neth.iecal.curbox.data.db.AppDatabase
 import neth.iecal.curbox.data.models.ExternalUnlockCondition
 import neth.iecal.curbox.data.models.AppBlockerWarningScreenConfig
 import neth.iecal.curbox.databinding.DialogWarningOverlayBinding
+import neth.iecal.curbox.utils.AntiUninstallManager
 import neth.iecal.curbox.utils.DataStoreManager
 import neth.iecal.curbox.utils.FocusGoalProgress
 import java.util.Calendar
@@ -132,6 +135,8 @@ class WarningActivity : AppCompatActivity() {
     }
 
     private var proceedTimer: CountDownTimer? = null
+    private var unlockGapTimer: CountDownTimer? = null
+    private var isProceedHiddenByFocusGoal = false
     private var dialog: AlertDialog? = null
 
     private var vibrator: Vibrator? = null
@@ -193,6 +198,9 @@ class WarningActivity : AppCompatActivity() {
         externalCondition = warningScreenConfig.externalUnlockCondition
         externalWarningConfig = warningScreenConfig
         val targetId = intent.getStringExtra("result_id") ?: ""
+        val unlockGapEndsAt = intent.getLongExtra(AppBlocker.EXTRA_UNLOCK_GAP_ENDS_AT, 0L)
+        val nextUnlockGapMinutes = intent.getLongExtra(AppBlocker.EXTRA_NEXT_UNLOCK_GAP_MN, 0L)
+        val emergencyUnlocksLeft = intent.getIntExtra(AppBlocker.EXTRA_EMERGENCY_UNLOCKS_LEFT, 0)
         var isProceedLimitExceeded = false
         var timeUntilNextProceedMn = 0L
         var proceedsLeft = -1
@@ -362,7 +370,37 @@ class WarningActivity : AppCompatActivity() {
                         }
                         binding.proceedSeconds.visibility = View.GONE
                     }
-                }.start()
+                }
+
+            val unlockGapRemaining = unlockGapEndsAt - System.currentTimeMillis()
+            if (unlockGapRemaining > 0) {
+                startUnlockGapCountdown(unlockGapRemaining)
+            } else {
+                proceedTimer?.start()
+            }
+            if (nextUnlockGapMinutes > 0) {
+                binding.unlockGapNext.visibility = View.VISIBLE
+                binding.unlockGapNext.text = resources.getQuantityString(
+                    R.plurals.warning_unlock_gap_next,
+                    nextUnlockGapMinutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    nextUnlockGapMinutes
+                )
+            }
+        }
+
+        if (mode == Constants.WARNING_SCREEN_MODE_APP_BLOCKER &&
+            emergencyUnlocksLeft > 0 &&
+            targetId.isNotEmpty()
+        ) {
+            binding.btnEmergency.visibility = View.VISIBLE
+            binding.btnEmergency.text = resources.getQuantityString(
+                R.plurals.warning_emergency_unlock_button,
+                emergencyUnlocksLeft,
+                emergencyUnlocksLeft
+            )
+            binding.btnEmergency.setOnClickListener {
+                showEmergencyUnlockDialog(warningScreenConfig, targetId)
+            }
         }
 
         dialog = MaterialAlertDialogBuilder(this)
@@ -613,6 +651,87 @@ class WarningActivity : AppCompatActivity() {
         }
     }
 
+    /** Hides Proceed until the wait after the last unlock is over, then starts the normal wait. */
+    private fun startUnlockGapCountdown(remainingMillis: Long) {
+        binding.btnProceed.visibility = View.GONE
+        binding.proceedSeconds.visibility = View.VISIBLE
+        unlockGapTimer = object : CountDownTimer(remainingMillis.coerceAtMost(MAX_UNLOCK_GAP_MS), 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                val totalSeconds = (millisUntilFinished + 999) / 1000
+                binding.proceedSeconds.text = getString(
+                    R.string.warning_unlock_gap_wait,
+                    totalSeconds / 60,
+                    totalSeconds % 60
+                )
+            }
+
+            override fun onFinish() {
+                if (!isProceedHiddenByFocusGoal) binding.btnProceed.visibility = View.VISIBLE
+                proceedTimer?.start()
+            }
+        }.start()
+    }
+
+    private fun showEmergencyUnlockDialog(
+        warningScreenConfig: AppBlockerWarningScreenConfig,
+        groupId: String
+    ) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_anti_uninstall_password, null)
+        val passwordField = dialogView.findViewById<TextInputEditText>(R.id.input_password)
+        dialogView.findViewById<TextInputLayout>(R.id.input_layout_confirm).visibility = View.GONE
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.warning_emergency_unlock_title)
+            .setMessage(R.string.warning_emergency_unlock_message)
+            .setView(dialogView)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.warning_emergency_unlock_confirm) { _, _ ->
+                val password = passwordField.text?.toString().orEmpty()
+                lifecycleScope.launch {
+                    val passwordHash = DataStoreManager(applicationContext).settings.first()
+                        .unlockGapConfig.emergencyPasswordHash
+                    if (passwordHash.isEmpty() ||
+                        AntiUninstallManager.hashPassword(password) != passwordHash
+                    ) {
+                        Toast.makeText(
+                            this@WarningActivity,
+                            R.string.anti_uninstall_wrong_password,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@launch
+                    }
+                    sendEmergencyUnlock(warningScreenConfig, groupId)
+                }
+            }
+            .show()
+    }
+
+    /** Unlocks for the group's normal time, skipping the wait, the limits and any challenge. */
+    private fun sendEmergencyUnlock(warningScreenConfig: AppBlockerWarningScreenConfig, groupId: String) {
+        val minutes = if (warningScreenConfig.isOnOpenConfig) {
+            1440
+        } else {
+            (warningScreenConfig.timeInterval / 60_000L).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+        }
+        binding.btnEmergency.isEnabled = false
+        binding.btnProceed.isEnabled = false
+        sendRefreshRequest(
+            groupId,
+            AppBlocker.INTENT_ACTION_REFRESH_APP_BLOCKER_COOLDOWN,
+            minutes,
+            isEmergency = true,
+            onDelivered = {
+                try {
+                    val launchPackage = intent.getStringExtra("launch_package") ?: groupId
+                    packageManager.getLaunchIntentForPackage(launchPackage)
+                        ?.let(::startActivity)
+                } finally {
+                    closeWarningScreen()
+                }
+            }
+        )
+    }
+
     private fun setupAdaptiveMathChallenge(questionCount: Int, startingLevel: Int) {
         val challenge = AdaptiveMathChallenge(
             requiredAnswers = questionCount.coerceIn(
@@ -803,6 +922,7 @@ class WarningActivity : AppCompatActivity() {
 
     private fun restrictFocusGoal(message: String) {
         binding.focusGoalStatus.text = message
+        isProceedHiddenByFocusGoal = true
         binding.btnProceed.visibility = View.GONE
         binding.btnCancel.setText(R.string.okay)
     }
@@ -874,6 +994,7 @@ class WarningActivity : AppCompatActivity() {
         super.onDestroy()
         stopNfcUnlockScan()
         proceedTimer?.cancel()
+        unlockGapTimer?.cancel()
         mathRetryTimer?.cancel()
         vibrator?.cancel()
         dialog?.dismiss()
@@ -883,11 +1004,13 @@ class WarningActivity : AppCompatActivity() {
         id: String,
         action: String,
         time: Int,
+        isEmergency: Boolean = false,
         onDelivered: (() -> Unit)? = null
     ) {
         val intent = Intent(action).setPackage(packageName)
         intent.putExtra("result_id", id)
         intent.putExtra("selected_time", time * 60_000L)
+        if (isEmergency) intent.putExtra(AppBlocker.EXTRA_EMERGENCY, true)
         if (onDelivered == null) {
             sendBroadcast(intent)
             return
@@ -976,5 +1099,6 @@ class WarningActivity : AppCompatActivity() {
         const val MAX_ADAPTIVE_MATH_LEVEL = 10
         const val MIN_FOCUS_GOAL_MINUTES = 15
         const val MAX_FOCUS_GOAL_MINUTES = 24 * 60
+        const val MAX_UNLOCK_GAP_MS = 7 * 24 * 60 * 60_000L
     }
 }

@@ -144,6 +144,20 @@ internal class WarningConfigFormController(
         )
         updateProceedWindowInput(initialInputValue)
 
+        // The wait between unlocks is tracked by the app blocker, so only app groups offer it
+        binding.unlockGapSwitch.isVisible = supportsOnEachOpen
+        binding.unlockGapSwitch.isChecked = supportsOnEachOpen && config.isUnlockGapEnabled
+        binding.unlockGapContainer.isVisible = binding.unlockGapSwitch.isChecked
+        val unlockGapStart = config.unlockGapStartMn.coerceAtLeast(1)
+        binding.unlockGapStartSlider.value = unlockGapStart.toFloat().coerceAtMost(60f)
+        updateUnlockGapStartInput(unlockGapStart.toLong())
+        val unlockGapStep = config.unlockGapStepMn.coerceAtLeast(0)
+        binding.unlockGapStepSlider.value = unlockGapStep.toFloat().coerceAtMost(30f)
+        updateUnlockGapStepInput(unlockGapStep.toLong())
+        val unlockGapMax = config.unlockGapMaxMn.coerceAtLeast(1)
+        binding.unlockGapMaxSlider.value = unlockGapMax.toFloat().coerceAtMost(240f)
+        updateUnlockGapMaxInput(unlockGapMax.toLong())
+
         binding.warningMsgEdit.setText(config.message.joinToString(", "))
         binding.switchVibrateBrightness.isChecked = config.vibrateAndIncBrightness
     }
@@ -186,6 +200,27 @@ internal class WarningConfigFormController(
         binding.proceedLimitSwitch.setOnCheckedChangeListener { _, isChecked ->
             binding.proceedLimitContainer.isVisible = isChecked
         }
+        binding.unlockGapSwitch.setOnCheckedChangeListener { _, isChecked ->
+            binding.unlockGapContainer.isVisible = isChecked
+        }
+        setupNumericInput(
+            binding.unlockGapStartSlider,
+            binding.unlockGapStartInput,
+            binding.unlockGapStartInputLayout,
+            updateInput = ::updateUnlockGapStartInput
+        )
+        setupNumericInput(
+            binding.unlockGapStepSlider,
+            binding.unlockGapStepInput,
+            binding.unlockGapStepInputLayout,
+            updateInput = ::updateUnlockGapStepInput
+        )
+        setupNumericInput(
+            binding.unlockGapMaxSlider,
+            binding.unlockGapMaxInput,
+            binding.unlockGapMaxInputLayout,
+            updateInput = ::updateUnlockGapMaxInput
+        )
         binding.switchOnEachOpen.setOnCheckedChangeListener { _, isChecked ->
             val challengeIndex = selectedChallengeIndex()
             if (isChecked && challengeIndex == WarningUnlockSelectionMapper.NO_EFFORT_INDEX) {
@@ -311,7 +346,11 @@ internal class WarningConfigFormController(
             proceedsTimeWindowMn = selectedProceedWindowMinutes(),
             isOnOpenConfig = isOnEachOpenEnabled(),
             externalUnlockCondition = if (selectedChallengeIndex() == WarningUnlockSelectionMapper.EFFORT_INDEX &&
-                selectedSecondaryIndex(selectedChallengeIndex()) == 5) selectedExternalCondition else null
+                selectedSecondaryIndex(selectedChallengeIndex()) == 5) selectedExternalCondition else null,
+            isUnlockGapEnabled = supportsOnEachOpen && binding.unlockGapSwitch.isChecked,
+            unlockGapStartMn = numericInputValue(binding.unlockGapStartInput).toInt(),
+            unlockGapStepMn = numericInputValue(binding.unlockGapStepInput).toInt(),
+            unlockGapMaxMn = numericInputValue(binding.unlockGapMaxInput).toInt()
         )
     }
 
@@ -434,6 +473,24 @@ internal class WarningConfigFormController(
                 binding.focusGoalMinutesSlider,
                 binding.focusGoalMinutesInput,
                 binding.focusGoalMinutesInputLayout
+            ),
+            NumericInput(
+                binding.unlockGapStartSlider,
+                binding.unlockGapStartInput,
+                binding.unlockGapStartInputLayout,
+                MAX_UNLOCK_GAP_MINUTES
+            ),
+            NumericInput(
+                binding.unlockGapStepSlider,
+                binding.unlockGapStepInput,
+                binding.unlockGapStepInputLayout,
+                MAX_UNLOCK_GAP_MINUTES
+            ),
+            NumericInput(
+                binding.unlockGapMaxSlider,
+                binding.unlockGapMaxInput,
+                binding.unlockGapMaxInputLayout,
+                MAX_UNLOCK_GAP_MINUTES
             )
         )
     }
@@ -657,6 +714,18 @@ internal class WarningConfigFormController(
         setNumericInputValue(binding.focusGoalMinutesInput, value)
     }
 
+    private fun updateUnlockGapStartInput(value: Long) {
+        setNumericInputValue(binding.unlockGapStartInput, value)
+    }
+
+    private fun updateUnlockGapStepInput(value: Long) {
+        setNumericInputValue(binding.unlockGapStepInput, value)
+    }
+
+    private fun updateUnlockGapMaxInput(value: Long) {
+        setNumericInputValue(binding.unlockGapMaxInput, value)
+    }
+
     private fun unitOptions(): List<String> {
         return listOf(
             fragment.getString(R.string.unit_minutes),
@@ -688,6 +757,7 @@ internal class WarningConfigFormController(
         const val MAX_MATH_LEVEL = 10
         const val MIN_FOCUS_MINUTES = 15
         const val MAX_FOCUS_MINUTES = 24 * 60
+        const val MAX_UNLOCK_GAP_MINUTES = 24 * 60L
     }
 }
 

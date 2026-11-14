@@ -18,7 +18,10 @@ enum class GatedSettingsField {
     WEBSITE_USAGE_TRACKING,
     CHANGE_DELAY,
     SIP_STRETCH,
-    SCHEDULED_NOTIFICATIONS
+    SCHEDULED_NOTIFICATIONS,
+    /** Day end times only. Builds before [EMERGENCY_UNLOCK] stored the whole [UnlockGapConfig] here. */
+    UNLOCK_GAP,
+    EMERGENCY_UNLOCK
 }
 
 /**

@@ -1116,4 +1116,39 @@
         <item quantity="one">%d notification waited for this time.</item>
         <item quantity="other">%d notifications waited for this time.</item>
     </plurals>
+    <!-- Unlock gap and emergency unlock -->
+    <string name="label_unlock_gap">Wait longer after each unlock</string>
+    <string name="label_unlock_gap_desc">After an unlock ends, you must wait before you can unlock again. The wait grows with each unlock and starts over when your day ends. Example: 1, 2, 3 minutes and so on.</string>
+    <string name="label_unlock_gap_start">First wait in minutes</string>
+    <string name="label_unlock_gap_step">Add this many minutes each time</string>
+    <string name="label_unlock_gap_max">Longest wait in minutes</string>
+    <string name="warning_unlock_gap_wait">You just had an unlock. You can unlock again in %1$d:%2$02d.</string>
+    <plurals name="warning_unlock_gap_next">
+        <item quantity="one">After this unlock, the next one waits %1$d minute.</item>
+        <item quantity="other">After this unlock, the next one waits %1$d minutes.</item>
+    </plurals>
+    <plurals name="warning_emergency_unlock_button">
+        <item quantity="one">Emergency unlock (%1$d left today)</item>
+        <item quantity="other">Emergency unlock (%1$d left today)</item>
+    </plurals>
+    <string name="warning_emergency_unlock_title">Emergency unlock</string>
+    <string name="warning_emergency_unlock_message">Type your emergency password. This opens the app right away and skips every wait and check.</string>
+    <string name="warning_emergency_unlock_confirm">Unlock</string>
+    <string name="change_delay_field_unlock_gap">Day end for unlock waits</string>
+    <string name="change_delay_field_emergency_unlock">Emergency unlock</string>
+    <string name="unlock_gap_title">Unlock waits</string>
+    <string name="unlock_gap_card_subtitle">When your day ends and your emergency password</string>
+    <string name="unlock_gap_help_popup">App groups can make you wait longer after each unlock. Here you pick when your day ends, so the waits start small again. You can also set an emergency password that unlocks right away.</string>
+    <string name="unlock_gap_day_end_title">When your day ends</string>
+    <string name="unlock_gap_day_end_desc">The waits start over at this time. A late time like 3:00 counts as the same night. Example: Friday at 4:00 means Saturday at 4:00 in the morning.</string>
+    <string name="unlock_gap_day_end_row">%1$s night ends at %2$s</string>
+    <string name="unlock_gap_emergency_title">Emergency unlock</string>
+    <string name="unlock_gap_emergency_desc">A password that unlocks any app group right away, even during a wait. Use it only when you truly need it.</string>
+    <string name="unlock_gap_emergency_off">No password set. Emergency unlock is off.</string>
+    <string name="unlock_gap_emergency_on">Password set.</string>
+    <string name="unlock_gap_emergency_set">Set password</string>
+    <string name="unlock_gap_emergency_change">Change password</string>
+    <string name="unlock_gap_emergency_remove">Remove password</string>
+    <string name="unlock_gap_emergency_per_day">Emergency unlocks per day: %1$d</string>
+    <string name="unlock_gap_day_end_too_late">Pick a time before noon.</string>
 </resources>

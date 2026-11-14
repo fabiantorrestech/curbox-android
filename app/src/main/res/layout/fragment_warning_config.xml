@@ -701,6 +701,106 @@
                     </LinearLayout>
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/unlock_gap_switch"
+                        style="@style/TextAppearance.Material3.TitleSmall"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/label_unlock_gap"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:id="@+id/unlock_gap_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <TextView
+                            style="@style/TextAppearance.Material3.BodySmall"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="8dp"
+                            android:text="@string/label_unlock_gap_desc" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/unlock_gap_start_input_layout"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="@string/label_unlock_gap_start">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/unlock_gap_start_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionDone"
+                                android:inputType="number"
+                                android:selectAllOnFocus="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/unlock_gap_start_slider"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:stepSize="1.0"
+                            android:value="1.0"
+                            android:valueFrom="1.0"
+                            android:valueTo="60.0" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/unlock_gap_step_input_layout"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="@string/label_unlock_gap_step">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/unlock_gap_step_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionDone"
+                                android:inputType="number"
+                                android:selectAllOnFocus="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/unlock_gap_step_slider"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:stepSize="1.0"
+                            android:value="1.0"
+                            android:valueFrom="0.0"
+                            android:valueTo="30.0" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/unlock_gap_max_input_layout"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="@string/label_unlock_gap_max">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/unlock_gap_max_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionDone"
+                                android:inputType="number"
+                                android:selectAllOnFocus="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/unlock_gap_max_slider"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:stepSize="1.0"
+                            android:value="30.0"
+                            android:valueFrom="1.0"
+                            android:valueTo="240.0" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/switch_vibrate_brightness"
                         style="@style/TextAppearance.Material3.TitleSmall"
                         android:layout_width="match_parent"

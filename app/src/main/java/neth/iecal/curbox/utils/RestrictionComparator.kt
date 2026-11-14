@@ -19,6 +19,7 @@ import neth.iecal.curbox.data.models.ScheduledNotificationsConfig
 import neth.iecal.curbox.data.models.SipStretchConfig
 import neth.iecal.curbox.data.models.TimeInterval
 import neth.iecal.curbox.data.models.UiHiderConfig
+import neth.iecal.curbox.data.models.UnlockGapConfig
 import neth.iecal.curbox.data.models.upgradeLegacyConfig
 import neth.iecal.curbox.hardcoded.allScripts
 
@@ -68,10 +69,28 @@ object RestrictionComparator {
                     !current.isWebsiteUsageTrackingEnabled || proposed.isWebsiteUsageTrackingEnabled
                 GatedSettingsField.CHANGE_DELAY ->
                     changeDelay(current.settingsChangeDelayConfig2, proposed.settingsChangeDelayConfig2)
+                GatedSettingsField.UNLOCK_GAP ->
+                    unlockGapDayEnds(current.unlockGapConfig, proposed.unlockGapConfig)
+                GatedSettingsField.EMERGENCY_UNLOCK ->
+                    emergencyUnlock(current.unlockGapConfig, proposed.unlockGapConfig)
             }
         } catch (e: Exception) {
             false
         }
+    }
+
+    fun unlockGapDayEnds(old: UnlockGapConfig, new: UnlockGapConfig): Boolean {
+        // Moving a day end changes when streaks reset, which can't be proven stricter
+        return old.dayEndMinutes == new.dayEndMinutes
+    }
+
+    fun emergencyUnlock(old: UnlockGapConfig, new: UnlockGapConfig): Boolean {
+        // A new or changed password is a new way past the block; removing it is stricter
+        val passwordOk = new.emergencyPasswordHash.isEmpty() ||
+            new.emergencyPasswordHash == old.emergencyPasswordHash
+        val emergencyCountOk = new.emergencyPasswordHash.isEmpty() ||
+            new.emergencyUnlocksPerDay <= old.emergencyUnlocksPerDay
+        return passwordOk && emergencyCountOk
     }
 
     fun changeDelay(old: SettingsChangeDelayConfig, new: SettingsChangeDelayConfig): Boolean {
@@ -354,6 +373,14 @@ object RestrictionComparator {
         val dialogHiddenOk = !o.isWarningDialogHidden || n.isWarningDialogHidden
         val proceedDelayOk = n.proceedDelayInSecs >= o.proceedDelayInSecs
         val vibrateOk = !o.vibrateAndIncBrightness || n.vibrateAndIncBrightness
+        val unlockGapOk = when {
+            o.isUnlockGapEnabled && !n.isUnlockGapEnabled -> false
+            o.isUnlockGapEnabled && n.isUnlockGapEnabled ->
+                n.unlockGapStartMn >= o.unlockGapStartMn &&
+                    n.unlockGapStepMn >= o.unlockGapStepMn &&
+                    n.unlockGapMaxMn >= o.unlockGapMaxMn
+            else -> true
+        }
         val proceedLimitOk = when {
             o.proceedLimitEnabled && !n.proceedLimitEnabled -> false
             o.proceedLimitEnabled && n.proceedLimitEnabled ->
@@ -393,7 +420,7 @@ object RestrictionComparator {
 
         return onEachOpenOk && cooldownOk && dynamicIntervalOk &&
             proceedDisabledOk && dialogHiddenOk &&
-            proceedDelayOk && vibrateOk && proceedLimitOk && qrOk && nfcOk && typingOk && intentOk &&
+            proceedDelayOk && vibrateOk && proceedLimitOk && unlockGapOk && qrOk && nfcOk && typingOk && intentOk &&
             adaptiveMathOk && adaptiveMathQuestionCountOk && adaptiveMathStartingLevelOk &&
             focusGoalOk && intentMinLengthOk
     }

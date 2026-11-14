@@ -153,6 +153,14 @@ class ReducersFragment : Fragment() {
             startActivity(intent)
         }
 
+        val unlockGapCard = view.findViewById<MaterialCardView>(R.id.card_unlock_gap)
+        unlockGapCard.setOnClickListener {
+            val intent = Intent(requireContext(), FragmentActivity::class.java).apply {
+                putExtra("fragment", neth.iecal.curbox.ui.fragments.main.reducers.advanced.UnlockGapFragment.FRAGMENT_ID)
+            }
+            startActivity(intent)
+        }
+
         val settingsChangeDelayCard = view.findViewById<MaterialCardView>(R.id.card_settings_change_delay)
         settingsChangeDelayCard.setOnClickListener {
             val intent = Intent(requireContext(), FragmentActivity::class.java).apply {
