@@ -291,6 +291,7 @@ class AppBlockerService : BaseBlockingService() {
         cleanupFeature("reel usage") { reelUsageTracker.onDestroy() }
         cleanupFeature("website usage") { websiteUsageTracker.onDestroy() }
         cleanupFeature("app usage") { appUsageTracker.onDestroy() }
+        DeadServiceRecycler.onServiceDestroyed()
     }
 
     private inline fun cleanupFeature(name: String, cleanup: () -> Unit) {
